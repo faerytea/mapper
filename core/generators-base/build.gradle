@@ -1,0 +1,36 @@
+plugins {
+    id 'java'
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group 'com.gitlab.faerytea.mapper'
+version '0.4.0'
+
+sourceCompatibility = 1.8
+
+repositories {
+    mavenCentral()
+    mavenLocal()
+}
+
+dependencies {
+    implementation 'org.jetbrains:annotations:16.0.2'
+    api 'com.gitlab.faerytea.mapper:annotations:+'
+    api 'com.squareup:javapoet:1.11.1'
+}
+
+task sourcesJar(type: Jar) {
+    classifier = 'sources'
+    from sourceSets.main.allJava
+}
+
+publishing {
+    publications {
+        mapperGeneratorsBase(MavenPublication) {
+            from components.java
+
+            artifact sourcesJar
+        }
+    }
+}

@@ -1,0 +1,38 @@
+plugins {
+    id 'java'
+    id 'java-library'
+    id 'maven-publish'
+}
+
+group 'com.gitlab.faerytea.mapper'
+version '0.5'
+
+sourceCompatibility = 1.6
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+}
+
+task sourcesJar(type: Jar) {
+    classifier = 'sources'
+    from sourceSets.main.allJava
+}
+
+task javadocJar(type: Jar) {
+    classifier = 'javadoc'
+    from javadoc.destinationDir
+}
+
+publishing {
+    publications {
+        mapperAnnotations(MavenPublication) {
+            from components.java
+
+            artifact sourcesJar
+            artifact javadocJar
+        }
+    }
+}

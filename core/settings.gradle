@@ -1,0 +1,5 @@
+rootProject.name = 'core'
+include ':annotations'
+include ':processor'
+include ':generators-base'
+
