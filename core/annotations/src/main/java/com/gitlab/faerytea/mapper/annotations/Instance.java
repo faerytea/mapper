@@ -16,5 +16,11 @@ import java.lang.annotation.Target;
         ElementType.FIELD
 })
 public @interface Instance {
+    /**
+     * Name for named adapters
+     *
+     * @return name of instance, must be unique
+     */
+    String value() default "";
 }
 

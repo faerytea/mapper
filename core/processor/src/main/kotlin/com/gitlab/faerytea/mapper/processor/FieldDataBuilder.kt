@@ -7,6 +7,7 @@ import javax.lang.model.type.TypeMirror
 class FieldDataBuilder(
         val name: String,
         val tp: TypeMirror,
+        val required: Boolean,
         val getters: MutableList<Getter> = ArrayList(1),
         val setters: MutableList<Setter> = ArrayList(2)
 ) {

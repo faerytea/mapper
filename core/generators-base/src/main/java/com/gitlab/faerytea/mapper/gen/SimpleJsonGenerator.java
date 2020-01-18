@@ -25,10 +25,12 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import javax.annotation.processing.ProcessingEnvironment;
+import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.TypeMirror;
@@ -68,12 +70,12 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
                 .addModifiers(Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
                 .addField(FieldSpec.builder(
                         ClassName.bestGuess(adapterClassName),
-                        instance.instanceName,
+                        instance.instanceJavaName,
                         Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
                         .initializer("new " + adapterClassName + "()")
                         .build())
                 .build());
-        boolean ser = true, par = true;
+        boolean ser = true, par = targetType.getKind() == ElementKind.CLASS && !targetType.getModifiers().contains(Modifier.ABSTRACT);
         for (FieldData v : fields.values()) {
             ser &= !v.getters.isEmpty();
             par &= !v.setters.isEmpty();
@@ -164,6 +166,14 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
             //endregion
             //region assembling
             code.add("\n//region building\n");
+            for (final Map.Entry<String, FieldData> entry : fields.entrySet()) {
+                final FieldData data = entry.getValue();
+                if (data.required) {
+                    final String def = data.setters.get(0).defaultValue;
+                    final String intermediate = data.fieldType.getKind().isPrimitive() || def.equals("null") ? "def == _$L" : "def.equals(_$L)";
+                    code.addStatement("if (" + intermediate + ") throw new RuntimeException($S)", entry.getKey(), "Field " + entry.getKey() + " is required!");
+                }
+            }
             final List<String> constParams = Generator.biggestConstructor(fields);
             code.addStatement("res = new $T($L)", targetType, joinParams(constParams));
             final Set<String> remaining = new HashSet<>(fields.keySet());
@@ -245,19 +255,66 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
         }
         if (ser) {
             final CodeBlock.Builder code = CodeBlock.builder();
+            final CodeBlock writeDelimiter;
+            if (writeDelimiter().isEmpty()) {
+                writeDelimiter = CodeBlock.of("");
+            } else {
+                code.addStatement("boolean __delimiter = false");
+                writeDelimiter = CodeBlock.builder()
+                        .beginControlFlow("if (__delimiter)")
+                        .addStatement(writeDelimiter())
+                        .nextControlFlow("else")
+                        .addStatement("__delimiter = true")
+                        .endControlFlow()
+                        .build();
+            }
             code.add(startObject());
-            boolean writeDelimiter = false;
             for (final Map.Entry<String, FieldData> field : fields.entrySet()) {
                 final String key = field.getKey();
                 final FieldData data = field.getValue();
-                if (writeDelimiter) {
-                    code.add(writeDelimiter());
-                } else {
-                    writeDelimiter = true;
-                }
                 code.add("\n//region " + key + "\n");
-                code.add(writeProperty(key));
                 final Getter getter = data.getters.get(0);
+                final String javaGetter = getter.isMethod ? getter.getterName + "()" : getter.getterName;
+                code.addStatement("final $T _$L = object.$L", data.fieldType, key, javaGetter);
+                if (!data.required) {
+                    final String def = getter.defaultValue;
+                    final boolean primitive = data.fieldType.getKind().isPrimitive();
+                    final boolean isNull = def.equals("null");
+                    final String condition;
+                    if (primitive || isNull) {
+                        if (primitive && isNull) {
+                            switch (data.fieldType.getKind()) {
+                                case BOOLEAN:
+                                    condition = "!_$L";
+                                    break;
+                                case BYTE:
+                                case SHORT:
+                                case INT:
+                                case LONG:
+                                    condition = "0 != _$L";
+                                    break;
+                                case CHAR:
+                                    condition = "'\0' != _$L";
+                                    break;
+                                case FLOAT:
+                                case DOUBLE:
+                                    condition = "0.0 != _$L";
+                                    break;
+                                default:
+                                    // impossible,
+                                    env.getMessager().printMessage(Diagnostic.Kind.ERROR, data.fieldType + " is primitive, but has kind " + data.fieldType.getKind());
+                                    condition = "true";
+                            }
+                        } else {
+                            condition = def + " != _$L";
+                        }
+                    } else {
+                        condition = "!java.util.Objects.equals(_$L, " + def + ")";
+                    }
+                    code.beginControlFlow("if (" + condition + ")", key);
+                }
+                code.add(writeDelimiter);
+                code.add(writeProperty(key));
                 final String adaName = acceptAdapter(getter.adapter, data.fieldType);
                 final CodeBlock.Builder generics = CodeBlock.builder();
                 for (final GenericTypeInfo gti : getter.genericArguments) {
@@ -268,17 +325,19 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
                     }
                 }
                 final CodeBlock.Builder expr = CodeBlock.builder();
-                final String javaGetter = getter.isMethod ? getter.getterName + "()" : getter.getterName;
                 if (getter.converter != null) {
                     final String convertName = adapterName(getter.converter.converter);
                     adapterNames.put(getter.converter.converter, convertName);
                     if (getter.converter.converter.instance == null)
                         instanceless.add(getter.converter.converter);
-                    expr.add("$L.$L(object.$L)", convertName, getter.converter.encodeName(), javaGetter);
+                    expr.add("$L.$L(_$L)", convertName, getter.converter.encodeName(), key);
                 } else {
-                    expr.add("object.$L", javaGetter);
+                    expr.add("_$L", key);
                 }
                 code.addStatement("$L.write($L, destination$L)", adaName, expr.build(), generics.build());
+                if (!data.required) {
+                    code.endControlFlow();
+                }
                 code.add("\n//endregion\n");
             }
             code.add(endObject());
@@ -431,7 +490,8 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
 
     @NotNull
     private String adapterName(@NotNull AdapterInfo adapter) {
-        return adapter.className.replace('.', '_').toUpperCase();
+        return adapter.className.replace('.', '_').toUpperCase()
+                + (adapter.instance != null && adapter.instance.namedInstanceName != null ? "__" + adapter.instance.namedInstanceName : "");
     }
 
     @NotNull

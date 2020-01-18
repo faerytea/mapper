@@ -5,6 +5,8 @@ import com.gitlab.faerytea.mapper.adapters.Parser
 import com.gitlab.faerytea.mapper.adapters.Serializer
 import com.gitlab.faerytea.mapper.annotations.Mappable
 import com.gitlab.faerytea.mapper.annotations.Property
+import com.gitlab.faerytea.mapper.annotations.Required
+import com.gitlab.faerytea.mapper.converters.Convert
 import com.gitlab.faerytea.mapper.gen.*
 import javax.lang.model.element.*
 import javax.lang.model.type.*
@@ -26,28 +28,28 @@ class MappableVisitor(
         val params: List<VariableElement> = e.parameters
         if (params.isEmpty() && !(retType.kind == TypeKind.VOID && retType is NoType)) {
             // got a getter
-            val converterData = e.accept(ConverterVisitor, processor.env)
-            val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), retType) })
+            val converterData = converter(e)
+            val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), retType, checkRequired(e)) })
             builder.getters.add(Getter(
                     builder.name,
                     e.simpleName.toString(),
                     true,
-                    serializer(converterData?.from ?: builder.tp),
+                    mapperFor(it, converterData?.from ?: builder.tp).second,
                     DefaultsVisitor.visit(e),
                     buildGenericsInfo(converterData?.from ?: builder.tp, false, ::serializer),
                     converterData
             ))
         } else if (params.size == 1) {
             // simple setter
-            val converterData = e.accept(ConverterVisitor, processor.env)
+            val converterData = converter(e)
             val arg = params[0]
             val argType = arg.asType()
-            val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), argType) })
+            val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), argType, checkRequired(e)) })
             builder.setters.add(Setter(
                     builder.name,
                     e.simpleName.toString(),
                     Setter.Type.CLASSIC,
-                    parser(converterData?.from ?: builder.tp),
+                    mapperFor(it, converterData?.from ?: builder.tp).first,
                     DefaultsVisitor.visit(e),
                     buildGenericsInfo(converterData?.from ?: builder.tp, true, ::parser),
                     converterData))
@@ -68,14 +70,14 @@ class MappableVisitor(
                 val params = e.parameters
                 processor.printWriter.appendln("params $params")
                 processor.printWriter.flush()
-                data class Prop(val name: String, val type: TypeMirror, val default: String, val parser: AdapterInfo, val converter: ConverterData?)
+                data class Prop(val name: String, val type: TypeMirror, val default: String, val required: Boolean, val parser: AdapterInfo, val converter: ConverterData?)
                 val propData = params.map { prop ->
-                    val converterData = ConverterVisitor.visit(prop, processor.env)
+                    val converterData = converter(prop)
                     val default = DefaultsVisitor.visit(prop)
                     val propTp = prop.asType()
                     prop.getAnnotation(Property::class.java)?.run {
-                        Prop(this.value.ifEmpty { prop.simpleName.toString() }, propTp, default, mapperFor(this, converterData?.from ?: propTp).first, converterData)
-                    } ?: Prop(prop.simpleName.toString(), propTp, default, parser(converterData?.from ?: propTp), converterData)
+                        Prop(this.value.ifEmpty { prop.simpleName.toString() }, propTp, default, checkRequired(prop), mapperFor(this, converterData?.from ?: propTp).first, converterData)
+                    } ?: Prop(prop.simpleName.toString(), propTp, default, checkRequired(prop), parser(converterData?.from ?: propTp), converterData)
                 }
                 processor.printWriter.appendln("propData: $propData")
                 processor.printWriter.flush()
@@ -86,7 +88,7 @@ class MappableVisitor(
                 processor.printWriter.appendln("class name: $className")
                 processor.printWriter.flush()
                 for (data in propData) {
-                    val builder = p.getOrPut(data.name, { FieldDataBuilder(data.name, data.type) })
+                    val builder = p.getOrPut(data.name, { FieldDataBuilder(data.name, data.type, data.required) })
                     builder.setters += Setter(
                             propNames,
                             className,
@@ -110,7 +112,7 @@ class MappableVisitor(
                     annotations[i].value.ifEmpty { params[i].simpleName.toString() }
                 }
                 val converters = Array(params.size) { i ->
-                    ConverterVisitor.visit(params[i], processor.env)
+                    converter(params[i])
                 }
                 val defaults = Array(params.size) { i ->
                     DefaultsVisitor.visit(params[i])
@@ -119,7 +121,7 @@ class MappableVisitor(
                 for (i in params.indices) {
                     val name = names[i]
                     val tp = params[i].asType()
-                    val builder = p.getOrPut(name, { FieldDataBuilder(name, tp) })
+                    val builder = p.getOrPut(name, { FieldDataBuilder(name, tp, checkRequired(params[i])) })
                     val converter = converters[i]
                     builder.setters += Setter(
                             namesList,
@@ -147,7 +149,7 @@ class MappableVisitor(
         val tp = e.asType()
         processor.printWriter.appendln("tp: $tp")
         processor.printWriter.flush()
-        val converterData = ConverterVisitor.visit(e, processor.env)
+        val converterData = converter(e)
         val default = DefaultsVisitor.visit(e)
         val (parser, serializer) = mapperFor(it, converterData?.from ?: tp)
         processor.printWriter.appendln("mappers: $parser, $serializer")
@@ -163,7 +165,7 @@ class MappableVisitor(
             }
             Modifier.FINAL -> {
                 // read-only
-                val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), tp) })
+                val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), tp, checkRequired(e)) })
                 builder.getters.add(Getter(
                         builder.name,
                         e.simpleName.toString(),
@@ -176,7 +178,7 @@ class MappableVisitor(
             }
             else -> {
                 // read and write
-                val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), tp) })
+                val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), tp, checkRequired(e)) })
                 builder.getters.add(Getter(
                         builder.name,
                         e.simpleName.toString(),
@@ -217,19 +219,27 @@ class MappableVisitor(
             val parser = if (Parser::class.safeCanonicalName().toString() == parserName.toString()) {
                 parser(tp)
             } else {
-                AdapterInfo(parserName, processor.instances[parserName])
+                adapterInfo(parserName, property.parseUsingNamed)
             }
             val serializerName = property.safeUsingSer()
             val serializer = if (Serializer::class.safeCanonicalName().toString() == serializerName.toString()) {
                 serializer(tp)
             } else {
-                AdapterInfo(serializerName, processor.instances[serializerName])
+                adapterInfo(serializerName, property.serializeUsingNamed)
             }
             parser to serializer
         } else {
-            AdapterInfo(this, processor.instances[this]).let { it to it }
+            adapterInfo(this, property.usingNamed).let { it to it }
         }
     }.also { processor.printWriter.flush() }
+
+    private fun adapterInfo(adapterName: CharSequence, name: String) =
+            AdapterInfo(adapterName, if (name.isNotEmpty()) processor.named[name].let {
+                if (it == null) {
+                    processor.m.printMessage(Diagnostic.Kind.ERROR, "Adapter instance ($adapterName) with name '$name' is not found")
+                }
+                null
+            } else processor.instances[adapterName])
 
     private fun parser(tp: TypeMirror) = when {
         tp.kind == TypeKind.TYPEVAR && tp is TypeVariable -> AdapterInfo("var$tp")
@@ -270,4 +280,18 @@ class MappableVisitor(
     }
 
     private fun TypeMirror.erase() = processor.types.erasure(this)
+
+    private fun converter(e: Element) = e.accept(ConverterVisitor, processor.env)?.run {
+        val name = e.getAnnotation(Convert::class.java).named
+        if (name.isEmpty()) return@run this
+        val instance = processor.named[name]
+        if (instance == null) {
+            processor.m.printMessage(Diagnostic.Kind.ERROR, "Converter ${converter.className} with name $name is not found!", e)
+            return@run this
+        } else {
+            return@run ConverterData(AdapterInfo(converter.className, instance), from, to)
+        }
+    }
+
+    private fun checkRequired(e: Element) = e.getAnnotation(Required::class.java)?.value ?: false
 }

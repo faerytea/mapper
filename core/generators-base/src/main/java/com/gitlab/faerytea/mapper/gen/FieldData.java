@@ -24,16 +24,19 @@ public final class FieldData {
     public final List<@NotNull Getter> getters;
     @NotNull
     public final List<@NotNull Setter> setters;
+    public final boolean required;
 
     public FieldData(
             @NotNull String fieldName,
             @NotNull TypeMirror fieldType,
             @NotNull List<@NotNull Getter> getters,
-            @NotNull List<@NotNull Setter> setters) {
+            @NotNull List<@NotNull Setter> setters,
+            boolean required) {
         this.fieldName = fieldName;
         this.fieldType = fieldType;
         this.getters = getters;
         this.setters = setters;
+        this.required = required;
     }
 
     @NotNull

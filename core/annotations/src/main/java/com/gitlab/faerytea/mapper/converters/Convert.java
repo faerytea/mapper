@@ -51,4 +51,5 @@ import java.lang.annotation.RetentionPolicy;
 public @interface Convert {
     Class<? extends MarkerConverter> value();
     boolean reversed() default false;
+    String named() default "";
 }

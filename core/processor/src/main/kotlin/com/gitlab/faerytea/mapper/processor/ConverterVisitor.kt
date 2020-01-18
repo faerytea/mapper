@@ -81,6 +81,8 @@ object ConverterVisitor : SimpleElementVisitor8<ConverterData?, ProcessingEnviro
             val converterData = if (tp.kind.isPrimitive) {
                 // our type is primitive
                 val toNameMethods = rightSignature.filter { it.simpleName.toString() == ConverterData.nameByKind("to", tp.kind)!! }
+                println("right signature $rightSignature")
+                println("toNameMethods $toNameMethods")
                 if (toNameMethods.size == 1) {
                     val oppositeTp = toNameMethods[0].parameters[0].asType()
                     val reverseConversionName =
@@ -90,8 +92,12 @@ object ConverterVisitor : SimpleElementVisitor8<ConverterData?, ProcessingEnviro
                             else
                                 // so we need "fromTp" with oppositeTp as ret type
                                 ConverterData.nameByKind("from", tp.kind)!!
+                    println("reverse conversion name: $reverseConversionName")
                     ConverterData(AdapterInfo(converterElement.qualifiedName.toString()), oppositeTp, tp).takeIf {
-                        (rightSignature.filter { it.simpleName.toString() == reverseConversionName && it.parameters[0] == tp }.size == 1)
+                        (rightSignature.filter {
+                            println("filtering: $it: ${it.simpleName}, ${it.parameters}, our is $tp and we have equality ${it.parameters[0] == tp}")
+                            it.simpleName.toString() == reverseConversionName && it.parameters[0].asType() == tp
+                        }.also { println("filtered: $it") }.size == 1)
                     }
                 } else {
                     null

@@ -62,4 +62,29 @@ public @interface Property {
      * @return adapter
      */
     Class<?> parseUsing() default Parser.class;
+
+    /**
+     * Specify {@link MappingAdapter} to use for mapping. By default uses adapter,
+     * annotated by {@link DefaultMapper}. Overrides {@link #serializeUsingNamed()}
+     * and {@link #parseUsingNamed()}.
+     *
+     * @return adapter
+     */
+    String usingNamed() default "";
+
+    /**
+     * Specify {@link Serializer} to use for mapping. By default uses adapter,
+     * annotated by {@link DefaultMapper}.
+     *
+     * @return adapter
+     */
+    String serializeUsingNamed() default "";
+
+    /**
+     * Specify {@link Parser} to use for mapping. By default uses adapter,
+     * annotated by {@link DefaultMapper}.
+     *
+     * @return adapter
+     */
+    String parseUsingNamed() default "";
 }

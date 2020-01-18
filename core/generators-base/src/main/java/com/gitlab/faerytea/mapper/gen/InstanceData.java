@@ -1,8 +1,9 @@
 package com.gitlab.faerytea.mapper.gen;
 
-import org.jetbrains.annotations.NotNull;
+import com.gitlab.faerytea.mapper.annotations.Instance;
 
-import java.util.Objects;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 public final class InstanceData {
     /**
@@ -10,20 +11,33 @@ public final class InstanceData {
      */
     @NotNull
     public final String holderClassName;
+    
     /**
      * Accessor for instance, getter or field name
      */
     @NotNull
-    public final String instanceName;
+    public final String instanceJavaName;
+
+    /**
+     * Name of concrete instance
+     * @see Instance#value()
+     */
+    @Nullable
+    public final String namedInstanceName;
 
     /**
      * Is a method?
      */
     public final boolean isMethod;
 
-    public InstanceData(@NotNull CharSequence holderClassName, @NotNull String instanceName, boolean isMethod) {
+    public InstanceData(@NotNull CharSequence holderClassName, @NotNull String instanceJavaName, boolean isMethod) {
+        this(holderClassName, instanceJavaName, null, isMethod);
+    }
+
+    public InstanceData(@NotNull CharSequence holderClassName, @NotNull String instanceJavaName, @Nullable String namedInstanceName, boolean isMethod) {
         this.holderClassName = holderClassName.toString();
-        this.instanceName = instanceName;
+        this.instanceJavaName = instanceJavaName;
+        this.namedInstanceName = namedInstanceName;
         this.isMethod = isMethod;
     }
 
@@ -35,31 +49,6 @@ public final class InstanceData {
      */
     @NotNull
     public String javaAccessor() {
-        return holderClassName + "." + instanceName + (isMethod ? "()" : "");
-    }
-
-    @NotNull
-    @Override
-    public String toString() {
-        return "Instance{" +
-                "holderClassName=" + holderClassName +
-                ", instanceName=" + instanceName +
-                ", isMethod=" + isMethod +
-                '}';
-    }
-
-    @Override
-    public boolean equals(Object o) {
-        if (this == o) return true;
-        if (o == null || getClass() != o.getClass()) return false;
-        InstanceData instance = (InstanceData) o;
-        return isMethod == instance.isMethod &&
-                holderClassName.equals(instance.holderClassName) &&
-                instanceName.equals(instance.instanceName);
-    }
-
-    @Override
-    public int hashCode() {
-        return Objects.hash(holderClassName, instanceName, isMethod);
+        return holderClassName + "." + instanceJavaName + (isMethod ? "()" : "");
     }
 }

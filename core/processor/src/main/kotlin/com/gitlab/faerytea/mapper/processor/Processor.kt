@@ -42,6 +42,7 @@ class Processor : AbstractProcessor() {
     internal val env
         get() = processingEnv
     internal val instances = HashMap<String, InstanceData>()
+    internal val named = HashMap<String, InstanceData>()
     private lateinit var generator: Generator
     private var ready: Boolean = false
     private val elementVisitor = MappableVisitor(this)
@@ -200,14 +201,19 @@ class Processor : AbstractProcessor() {
                 return
             }
         }!!
-        val instance = InstanceData(element.enclosingElement.toString(), element.simpleName.toString(), element.kind == ElementKind.METHOD)
-        instances[adapterType.toString()] = instance
-        converters.computeIfPresent(adapterType) { k, v ->
-            val oldInstance = v.instance
-            if (oldInstance != null && oldInstance != instance) {
-                m.printMessage(L.WARNING, "Instance for $k is already present (${oldInstance.javaAccessor()}), replacing by ${instance.javaAccessor()}")
+        val name = element.getAnnotation(Instance::class.java).value
+        val instance = InstanceData(element.enclosingElement.toString(), element.simpleName.toString(), if (name.isNotEmpty()) name else null, element.kind == ElementKind.METHOD)
+        if (name.isNotEmpty()) {
+            named[name] = instance
+        } else {
+            instances[adapterType.toString()] = instance
+            converters.computeIfPresent(adapterType) { k, v ->
+                val oldInstance = v.instance
+                if (oldInstance != null && oldInstance != instance) {
+                    m.printMessage(L.WARNING, "Instance for $k is already present (${oldInstance.javaAccessor()}), replacing by ${instance.javaAccessor()}")
+                }
+                AdapterInfo(v.className, instance)
             }
-            AdapterInfo(v.className, instance)
         }
     }
 
@@ -228,7 +234,7 @@ class Processor : AbstractProcessor() {
                 printWriter.appendln("got ${c.simpleName}")
                 try {
                     val mappings = c.accept(elementVisitor, HashMap())
-                            .mapValues { (_, v) -> FieldData(v.name, v.tp, v.getters, v.setters) }
+                            .mapValues { (_, v) -> FieldData(v.name, v.tp, v.getters, v.setters, v.required) }
                     val generateResult = generator.generateFor(c, mappings)
                     if (generateResult.canParse)
                         parsers[types.erasure(cAsType)] = generateResult.adapter

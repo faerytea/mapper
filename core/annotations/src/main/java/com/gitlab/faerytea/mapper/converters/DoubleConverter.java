@@ -1,6 +1,6 @@
 package com.gitlab.faerytea.mapper.converters;
 
 public interface DoubleConverter<T> extends MarkerConverter {
-    T toDouble(double value);
+    T fromDouble(double value);
     double toDouble(T value);
 }
