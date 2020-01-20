@@ -44,7 +44,6 @@ public final class FieldData {
         this.validator = validator;
     }
 
-    @NotNull
     @Override
     public String toString() {
         return "FieldData{" +
@@ -52,6 +51,8 @@ public final class FieldData {
                 ", fieldType=" + fieldType +
                 ", getters=" + getters +
                 ", setters=" + setters +
+                ", required=" + required +
+                ", validator=" + validator +
                 '}';
     }
 }

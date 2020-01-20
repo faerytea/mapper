@@ -3,7 +3,6 @@ package com.gitlab.faerytea.mapper.processor
 import com.gitlab.faerytea.mapper.adapters.*
 import com.gitlab.faerytea.mapper.annotations.*
 import com.gitlab.faerytea.mapper.gen.*
-import com.gitlab.faerytea.mapper.validation.Validate
 import java.io.File
 import java.io.PrintWriter
 import java.util.function.BiFunction
@@ -235,9 +234,35 @@ class Processor : AbstractProcessor() {
                 if (className in generated) continue
                 printWriter.appendln("got ${c.simpleName}")
                 try {
+                    val mappableAnnotation = c.getAnnotation(Mappable::class.java)!!
+                    val onUnknown = try {
+                        val handler = mappableAnnotation.onUnknown.java
+                        elements.getTypeElement(handler.canonicalName)
+                    } catch (e: MirroredTypeException) {
+                        types.asElement(e.typeMirror) as TypeElement
+                    }!!
+                    if (onUnknown.methods().find { e ->
+                                println(e)
+                                println(e.simpleName.toString() == "handle")
+                                println(e.parameters.size == 2)
+                                println(e.returnType.kind == TypeKind.VOID)
+                                println(types.isSameType(e.parameters[0].asType(), elements.getTypeElement("java.lang.String").asType()))
+                                println(types.isAssignable(generator.inputTypeName, e.parameters[1].asType()))
+                                e.simpleName.toString() == "handle"
+                                        && e.parameters.size == 2
+                                        && e.returnType.kind == TypeKind.VOID
+                                        && types.isSameType(e.parameters[0].asType(), elements.getTypeElement("java.lang.String").asType())
+                                        && types.isAssignable(generator.inputTypeName, e.parameters[1].asType())
+                            } == null) {
+                        m.printMessage(L.ERROR, "$onUnknown is not compatible", c)
+                        return false
+                    }
+                    val onUnknownInstance = mappableAnnotation.onUnknownNamed.toString().run {
+                        if (isEmpty()) instances[this] else named[this]
+                    }
                     val mappings = c.accept(elementVisitor, HashMap())
                             .mapValues { (_, v) -> FieldData(v.name, v.tp, v.getters, v.setters, v.required, v.validator) }
-                    val generateResult = generator.generateFor(c, mappings, validator(c, instances))
+                    val generateResult = generator.generateFor(c, mappings, AdapterInfo(onUnknown.qualifiedName.toString(), onUnknownInstance), validator(c, instances))
                     if (generateResult.canParse)
                         parsers[types.erasure(cAsType)] = generateResult.adapter
                     if (generateResult.canSerialize)

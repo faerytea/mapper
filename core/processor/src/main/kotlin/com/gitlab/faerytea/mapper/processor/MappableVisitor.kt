@@ -61,10 +61,7 @@ class MappableVisitor(
             processor.printWriter.appendln("found ctor")
             processor.printWriter.flush()
             // ctr
-            e.getAnnotation(Mappable::class.java)?.let { annotation ->
-                if (annotation.by.isNotEmpty()) {
-                    processor.m.printMessage(Diagnostic.Kind.WARNING, "@Mappable on ${e.enclosingElement.simpleName}'s constructor: 'by' argument (${annotation.by}) is ignored")
-                }
+            e.getAnnotation(Mappable::class.java)?.let { _ ->
                 processor.printWriter.appendln("with annotation")
                 processor.printWriter.flush()
                 val params = e.parameters

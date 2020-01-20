@@ -60,6 +60,7 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
     @Override
     public GeneratedResultInfo generateFor(@NotNull TypeElement targetType,
                                            @NotNull Map<@NotNull String, @NotNull FieldData> fields,
+                                           @NotNull AdapterInfo onUnknown,
                                            @Nullable ValidatorInfo validator) throws GeneratingException, IOException {
         currentGenerated = nameFor(targetType);
         final InstanceData instance = currentGenerated.adapter.instance;
@@ -96,6 +97,11 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
                 adapterNames.put(asAdapterInfo, validatorName);
             }
         }
+        if (onUnknown.instance == null) {
+            instanceless.add(onUnknown);
+        }
+        final String onUnknownName = adapterName(onUnknown);
+        adapterNames.put(onUnknown, onUnknownName);
         final boolean parameterized = !targetType.getTypeParameters().isEmpty();
         final List<TypeVariableName> typeVariables = targetType.getTypeParameters().stream().map(TypeVariableName::get).collect(Collectors.toList());
         if (parameterized) {
@@ -119,7 +125,7 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
                 ? ParameterizedTypeName.get(ClassName.get(targetType), typeVariables.toArray(new TypeName[typeVariables.size()]))
                 : ClassName.get(targetType);
         if (par) {
-            generateParser(targetType, fields, validator, adapterClassName, builder, validatorName, parameterized, typeVariables, targetTypeName);
+            generateParser(targetType, fields, validator, adapterClassName, builder, validatorName, parameterized, typeVariables, targetTypeName, onUnknownName);
         }
         if (ser) {
             generateSerializer(targetType, fields, validator, adapterClassName, builder, validatorName, parameterized, typeVariables, targetTypeName);
@@ -183,7 +189,8 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
                                 String validatorName,
                                 boolean parameterized,
                                 List<TypeVariableName> typeVariables,
-                                TypeName targetTypeName) throws GeneratingException {
+                                TypeName targetTypeName,
+                                String onUnknown) throws GeneratingException {
         final CodeBlock.Builder code = CodeBlock.builder();
         code.addStatement("final $1T res", targetType);
         code.add(initialAdvance());
@@ -235,7 +242,7 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
                     .endControlFlow();
         }
         code.beginControlFlow("default:")
-                .addStatement("java.lang.System.out.println($S + name)", "unknown property: ")
+                .addStatement(onUnknown + ".handle(name, in)")
                 .endControlFlow()  // default
                 .endControlFlow()  // switch
                 .endControlFlow()  // else

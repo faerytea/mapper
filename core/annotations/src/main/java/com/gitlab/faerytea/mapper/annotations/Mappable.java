@@ -1,5 +1,8 @@
 package com.gitlab.faerytea.mapper.annotations;
 
+import com.gitlab.faerytea.mapper.adapters.DoNothing;
+import com.gitlab.faerytea.mapper.adapters.UnknownPropertyHandler;
+
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -14,9 +17,19 @@ import java.lang.annotation.Target;
 @Target({ElementType.CONSTRUCTOR, ElementType.TYPE})
 public @interface Mappable {
     /**
-     * Specify mappers for generator
+     * Specify handler for unknown properties.
      *
-     * @return fully qualified mapper class
+     * @return handler
+     * @see UnknownPropertyHandler
+     * @see DoNothing
      */
-    String[] by() default {};
+    Class<? extends UnknownPropertyHandler> onUnknown() default DoNothing.class;
+
+    /**
+     * Specify named instance of unknown property handler.
+     * Use only with {@link #onUnknown()}
+     *
+     * @return name of named instance of {@link UnknownPropertyHandler}
+     */
+    String onUnknownNamed() default "";
 }

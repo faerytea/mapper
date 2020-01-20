@@ -4,7 +4,7 @@ plugins {
 }
 
 group 'com.gitlab.faerytea.mapper'
-version '0.1.15'
+version '0.1.16'
 
 repositories {
     mavenCentral()
@@ -13,8 +13,8 @@ repositories {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
-    implementation 'com.gitlab.faerytea.mapper:annotations:0.7'
-    implementation 'com.gitlab.faerytea.mapper:generators-base:0.5.0'
+    implementation 'com.gitlab.faerytea.mapper:annotations:0.8'
+    implementation 'com.gitlab.faerytea.mapper:generators-base:0.6.0'
 }
 
 compileKotlin {

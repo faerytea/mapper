@@ -33,6 +33,8 @@ public interface Generator {
      *
      * @param targetType type for adapter
      * @param fields     fields of object
+     * @param onUnknown  unknown property handler
+     * @param validator  class validator
      * @return fully qualified class name and its capabilities
      * @throws GeneratingException when parser / serializer / mapper cannot be generated
      * @throws IOException         when I/O error occurs (see {@link Filer})
@@ -41,16 +43,17 @@ public interface Generator {
     GeneratedResultInfo generateFor(
             @NotNull TypeElement targetType,
             @NotNull Map<@NotNull String, @NotNull FieldData> fields,
+            @NotNull AdapterInfo onUnknown,
             @Nullable ValidatorInfo validator
     ) throws GeneratingException, IOException;
 
     /**
      * Generate name for {@code targetType}'s parser/serializer.
-     * This method only will be called if {@link #generateFor(TypeElement, Map, ValidatorInfo)}
+     * This method only will be called if {@link #generateFor(TypeElement, Map, AdapterInfo, ValidatorInfo)}
      * cannot be called due to circular dependencies.
      *
      * @param targetType type for adapter
-     * @return same as {@link #generateFor(TypeElement, Map, ValidatorInfo)}
+     * @return same as {@link #generateFor(TypeElement, Map, AdapterInfo, ValidatorInfo)}
      */
     @NotNull
     GeneratedResultInfo nameFor(@NotNull TypeElement targetType);
@@ -100,7 +103,7 @@ public interface Generator {
      * Will be called by processor to notify that {@code cycle} classes
      * depends on each other in list iteration order. These classes
      * may require different instance initialization process.
-     * This method will be called before any {@link #generateFor(TypeElement, Map, ValidatorInfo)}
+     * This method will be called before any {@link #generateFor(TypeElement, Map, AdapterInfo, ValidatorInfo)}
      * calls for classes in list.
      *
      * @param cycle dependency cycle
