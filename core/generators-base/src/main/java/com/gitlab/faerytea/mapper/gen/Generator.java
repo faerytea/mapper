@@ -5,6 +5,7 @@ import com.gitlab.faerytea.mapper.adapters.Parser;
 import com.gitlab.faerytea.mapper.adapters.Serializer;
 
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -39,16 +40,17 @@ public interface Generator {
     @NotNull
     GeneratedResultInfo generateFor(
             @NotNull TypeElement targetType,
-            @NotNull Map<@NotNull String, @NotNull FieldData> fields
+            @NotNull Map<@NotNull String, @NotNull FieldData> fields,
+            @Nullable ValidatorInfo validator
     ) throws GeneratingException, IOException;
 
     /**
      * Generate name for {@code targetType}'s parser/serializer.
-     * This method only will be called if {@link #generateFor(TypeElement, Map)}
+     * This method only will be called if {@link #generateFor(TypeElement, Map, ValidatorInfo)}
      * cannot be called due to circular dependencies.
      *
      * @param targetType type for adapter
-     * @return same as {@link #generateFor(TypeElement, Map)}
+     * @return same as {@link #generateFor(TypeElement, Map, ValidatorInfo)}
      */
     @NotNull
     GeneratedResultInfo nameFor(@NotNull TypeElement targetType);
@@ -98,7 +100,7 @@ public interface Generator {
      * Will be called by processor to notify that {@code cycle} classes
      * depends on each other in list iteration order. These classes
      * may require different instance initialization process.
-     * This method will be called before any {@link #generateFor(TypeElement, Map)}
+     * This method will be called before any {@link #generateFor(TypeElement, Map, ValidatorInfo)}
      * calls for classes in list.
      *
      * @param cycle dependency cycle

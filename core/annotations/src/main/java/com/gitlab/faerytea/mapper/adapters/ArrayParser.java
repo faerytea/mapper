@@ -1,5 +1,7 @@
 package com.gitlab.faerytea.mapper.adapters;
 
+import java.io.IOException;
+
 /**
  * Parsers for Java's arrays.
  * If serialized form have different notation for
@@ -9,6 +11,6 @@ package com.gitlab.faerytea.mapper.adapters;
  * @param <Input> input type
  */
 public interface ArrayParser<Input> {
-    <ComponentTp> ComponentTp[] toObject(Input source, Parser<ComponentTp, Input> componentTpParser);
+    <ComponentTp> ComponentTp[] toObject(Input source, Parser<ComponentTp, Input> componentTpParser) throws IOException;
     <ComponentTp> Parser<ComponentTp[], Input> apply(Parser<ComponentTp, Input> componentParser);
 }

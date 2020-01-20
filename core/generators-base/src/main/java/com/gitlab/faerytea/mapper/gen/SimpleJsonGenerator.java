@@ -16,6 +16,7 @@ import com.squareup.javapoet.TypeSpec;
 import com.squareup.javapoet.TypeVariableName;
 
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -25,7 +26,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -59,7 +59,8 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
     @NotNull
     @Override
     public GeneratedResultInfo generateFor(@NotNull TypeElement targetType,
-                                           @NotNull Map<@NotNull String, @NotNull FieldData> fields) throws GeneratingException, IOException {
+                                           @NotNull Map<@NotNull String, @NotNull FieldData> fields,
+                                           @Nullable ValidatorInfo validator) throws GeneratingException, IOException {
         currentGenerated = nameFor(targetType);
         final InstanceData instance = currentGenerated.adapter.instance;
         assert instance != null; // we know it
@@ -75,6 +76,7 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
                         .initializer("new " + adapterClassName + "()")
                         .build())
                 .build());
+        String validatorName = null;
         boolean ser = true, par = targetType.getKind() == ElementKind.CLASS && !targetType.getModifiers().contains(Modifier.ABSTRACT);
         for (FieldData v : fields.values()) {
             ser &= !v.getters.isEmpty();
@@ -83,6 +85,17 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
         adapterNames.clear();
         localAdapterNames.clear();
         genericAdapterFields.clear();
+        if (validator != null) {
+            if (validator instanceof ValidatorInfo.ValidatorClass) {
+                ValidatorInfo.ValidatorClass cv = (ValidatorInfo.ValidatorClass) validator;
+                final AdapterInfo asAdapterInfo = cv.asAdapterInfo();
+                if (cv.instance == null) {
+                    instanceless.add(asAdapterInfo);
+                }
+                validatorName = adapterName(asAdapterInfo);
+                adapterNames.put(asAdapterInfo, validatorName);
+            }
+        }
         final boolean parameterized = !targetType.getTypeParameters().isEmpty();
         final List<TypeVariableName> typeVariables = targetType.getTypeParameters().stream().map(TypeVariableName::get).collect(Collectors.toList());
         if (parameterized) {
@@ -95,9 +108,9 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
                 throw new GeneratingException("no serializer & no parser can be generated");
             } else if (ser && !par) {
                 builder.addSuperinterface(parameterized(TypeName.get(targetType.asType()), SERIALIZER));
-            } else if (!ser && par) {
+            } else if (!ser/* && par*/) {
                 builder.addSuperinterface(parameterized(TypeName.get(targetType.asType()), PARSER));
-            } else if (ser && par) {
+            } else /*if (ser && par)*/ {
                 builder.addSuperinterface(parameterized(TypeName.get(targetType.asType()), MAPPER));
             }
         }
@@ -106,285 +119,10 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
                 ? ParameterizedTypeName.get(ClassName.get(targetType), typeVariables.toArray(new TypeName[typeVariables.size()]))
                 : ClassName.get(targetType);
         if (par) {
-            final CodeBlock.Builder code = CodeBlock.builder();
-            code.addStatement("final $1T res", targetType);
-            code.add(initialAdvance());
-            code.add("\n// start generated\n");
-            //region parser init
-            for (final Map.Entry<String, FieldData> field : fields.entrySet()) {
-                final String key = field.getKey();
-                final FieldData data = field.getValue();
-                final Setter setter = data.setters.get(0);
-                code.addStatement("$T _$L = " + setter.defaultValue, data.fieldType, key);
-                final AdapterInfo adapter = setter.adapter;
-                acceptAdapter(adapter, data.fieldType);
-            }
-            //endregion
-            //region parse loop
-            code.add("\n//region parsing\n")
-                    .addStatement("int cnt = 0")
-                    .beginControlFlow("while (cnt < $L)", fields.size())
-                    .addStatement("final String name")
-                    .add(nextName())
-                    .beginControlFlow("if (name == null)")
-                    .addStatement("break")
-                    .nextControlFlow("else")
-                    .beginControlFlow("switch (name)");
-            for (final Map.Entry<String, FieldData> field : fields.entrySet()) {
-                final String key = field.getKey();
-                final FieldData data = field.getValue();
-                final Setter setter = data.setters.get(0);
-                code.beginControlFlow("case $S:", key);
-                final CodeBlock.Builder generics = CodeBlock.builder();
-                for (final GenericTypeInfo gti : setter.genericArguments) {
-                    try {
-                        generics.add(", " + buildApplication(gti));
-                    } catch (WrappedException e) {
-                        e.unwrap();
-                    }
-                }
-                final ConverterData converter = setter.converter;
-                if (converter != null) {
-                    final String convName = adapterName(converter.converter);
-                    if (converter.converter.instance == null) instanceless.add(converter.converter);
-                    adapterNames.put(converter.converter, convName);
-                    code.addStatement("_$L = $L.$L($L.toObject(in$L))", key, convName, converter.decodeName(), get(setter.adapter), generics.build());
-                } else {
-                    code.addStatement("_$L = $L.toObject(in$L)", key, get(setter.adapter), generics.build());
-                }
-                code.addStatement("++cnt")
-                        .addStatement("break")
-                        .endControlFlow();
-            }
-            code.beginControlFlow("default:")
-                    .addStatement("java.lang.System.out.println($S + name)", "unknown property: ")
-                    .endControlFlow()  // default
-                    .endControlFlow()  // switch
-                    .endControlFlow()  // else
-                    .endControlFlow(); // loop
-            code.add("\n//endregion\n");
-            //endregion
-            //region assembling
-            code.add("\n//region building\n");
-            for (final Map.Entry<String, FieldData> entry : fields.entrySet()) {
-                final FieldData data = entry.getValue();
-                if (data.required) {
-                    final String def = data.setters.get(0).defaultValue;
-                    final String intermediate = data.fieldType.getKind().isPrimitive() || def.equals("null") ? "def == _$L" : "def.equals(_$L)";
-                    code.addStatement("if (" + intermediate + ") throw new RuntimeException($S)", entry.getKey(), "Field " + entry.getKey() + " is required!");
-                }
-            }
-            final List<String> constParams = Generator.biggestConstructor(fields);
-            code.addStatement("res = new $T($L)", targetType, joinParams(constParams));
-            final Set<String> remaining = new HashSet<>(fields.keySet());
-            remaining.removeAll(constParams);
-            for (final Map.Entry<String, FieldData> field : fields.entrySet()) {
-                final String key = field.getKey();
-                if (remaining.contains(key)) {
-                    for (final Setter setter : field.getValue().setters) {
-                        switch (setter.setterType) {
-                            case DIRECT:
-                                code.addStatement("res.$L = _$L", setter.setterName, key);
-                                break;
-                            case CLASSIC:
-                                code.addStatement("res.$L(_$L)", setter.setterName, key);
-                                break;
-                            case BULK:
-                                if (remaining.containsAll(setter.propertyNames)) {
-                                    code.addStatement("res.$L($L)", setter.setterName, joinParams(setter.propertyNames));
-                                    remaining.removeAll(setter.propertyNames);
-                                } else {
-                                    continue;
-                                }
-                                break;
-                            case CONSTRUCTOR:
-                                continue;
-                        }
-                        remaining.remove(key);
-                        break;
-                    }
-                }
-            }
-            if (!remaining.isEmpty())
-                throw new GeneratingException("Failed generation: cannot set " + remaining);
-            code.add("\n//endregion\n");
-            code.add(finalMove());
-            code.addStatement("return res");
-            //endregion
-            final CodeBlock.Builder varInit = CodeBlock.builder();
-            if (!localAdapterNames.isEmpty()) {
-                for (final Map.Entry<AdapterInfo, String> a : localAdapterNames.entrySet()) {
-                    if (a.getKey().className.equals(a.getValue()) || a.getValue().equals("this"))
-                        continue;
-                    varInit.addStatement("final $T $L = $L", ClassName.bestGuess(a.getKey().className), a.getValue(), instanceOf(a.getKey()));
-                }
-            }
-            final List<ParameterSpec> genericParams = typeVariables.stream().map(param -> ParameterSpec.builder(parameterized(param, PARSER), "var" + param.name, Modifier.FINAL).build()).collect(Collectors.toList());
-            builder.addMethod(MethodSpec.methodBuilder("toObject")
-                    .addTypeVariables(typeVariables)
-                    .addParameter(ClassName.get(getInputTypeName()), "in", Modifier.FINAL)
-                    .addParameters(genericParams)
-                    .returns(targetTypeName)
-                    .addAnnotations(parameterized ? Collections.emptySet() : Collections.singleton(AnnotationSpec.builder(Override.class).build()))
-                    .addModifiers(Modifier.PUBLIC)
-                    .addCode(varInit.add(code.build()).build())
-                    .build());
-
-            if (parameterized) {
-                builder.addMethod(MethodSpec.methodBuilder("apply")
-                        .addModifiers(Modifier.PUBLIC)
-                        .addTypeVariables(typeVariables)
-                        .addParameters(genericParams)
-                        .returns(parameterized(targetTypeName, PARSER))
-                        .addCode(CodeBlock.builder()
-                                .addStatement("return $L", TypeSpec.anonymousClassBuilder("")
-                                        .addSuperinterface(parameterized(targetTypeName, PARSER))
-                                        .addMethod(MethodSpec.methodBuilder("toObject")
-                                                .addParameter(ClassName.get(getInputTypeName()), "in", Modifier.FINAL)
-                                                .returns(targetTypeName)
-                                                .addAnnotation(Override.class)
-                                                .addModifiers(Modifier.PUBLIC)
-                                                .addCode(CodeBlock.builder()
-                                                        .addStatement("return $L.this.toObject(in$L)", adapterClassName, genericParams.stream().map(param -> ", " + param.name).collect(Collectors.joining()))
-                                                        .build())
-                                                .build())
-                                        .build())
-                                .build())
-                        .build());
-            }
+            generateParser(targetType, fields, validator, adapterClassName, builder, validatorName, parameterized, typeVariables, targetTypeName);
         }
         if (ser) {
-            final CodeBlock.Builder code = CodeBlock.builder();
-            final CodeBlock writeDelimiter;
-            if (writeDelimiter().isEmpty()) {
-                writeDelimiter = CodeBlock.of("");
-            } else {
-                code.addStatement("boolean __delimiter = false");
-                writeDelimiter = CodeBlock.builder()
-                        .beginControlFlow("if (__delimiter)")
-                        .addStatement(writeDelimiter())
-                        .nextControlFlow("else")
-                        .addStatement("__delimiter = true")
-                        .endControlFlow()
-                        .build();
-            }
-            code.add(startObject());
-            for (final Map.Entry<String, FieldData> field : fields.entrySet()) {
-                final String key = field.getKey();
-                final FieldData data = field.getValue();
-                code.add("\n//region " + key + "\n");
-                final Getter getter = data.getters.get(0);
-                final String javaGetter = getter.isMethod ? getter.getterName + "()" : getter.getterName;
-                code.addStatement("final $T _$L = object.$L", data.fieldType, key, javaGetter);
-                if (!data.required) {
-                    final String def = getter.defaultValue;
-                    final boolean primitive = data.fieldType.getKind().isPrimitive();
-                    final boolean isNull = def.equals("null");
-                    final String condition;
-                    if (primitive || isNull) {
-                        if (primitive && isNull) {
-                            switch (data.fieldType.getKind()) {
-                                case BOOLEAN:
-                                    condition = "!_$L";
-                                    break;
-                                case BYTE:
-                                case SHORT:
-                                case INT:
-                                case LONG:
-                                    condition = "0 != _$L";
-                                    break;
-                                case CHAR:
-                                    condition = "'\0' != _$L";
-                                    break;
-                                case FLOAT:
-                                case DOUBLE:
-                                    condition = "0.0 != _$L";
-                                    break;
-                                default:
-                                    // impossible,
-                                    env.getMessager().printMessage(Diagnostic.Kind.ERROR, data.fieldType + " is primitive, but has kind " + data.fieldType.getKind());
-                                    condition = "true";
-                            }
-                        } else {
-                            condition = def + " != _$L";
-                        }
-                    } else {
-                        condition = "!java.util.Objects.equals(_$L, " + def + ")";
-                    }
-                    code.beginControlFlow("if (" + condition + ")", key);
-                }
-                code.add(writeDelimiter);
-                code.add(writeProperty(key));
-                final String adaName = acceptAdapter(getter.adapter, data.fieldType);
-                final CodeBlock.Builder generics = CodeBlock.builder();
-                for (final GenericTypeInfo gti : getter.genericArguments) {
-                    try {
-                        generics.add(", " + buildApplication(gti));
-                    } catch (WrappedException e) {
-                        e.unwrap();
-                    }
-                }
-                final CodeBlock.Builder expr = CodeBlock.builder();
-                if (getter.converter != null) {
-                    final String convertName = adapterName(getter.converter.converter);
-                    adapterNames.put(getter.converter.converter, convertName);
-                    if (getter.converter.converter.instance == null)
-                        instanceless.add(getter.converter.converter);
-                    expr.add("$L.$L(_$L)", convertName, getter.converter.encodeName(), key);
-                } else {
-                    expr.add("_$L", key);
-                }
-                code.addStatement("$L.write($L, destination$L)", adaName, expr.build(), generics.build());
-                if (!data.required) {
-                    code.endControlFlow();
-                }
-                code.add("\n//endregion\n");
-            }
-            code.add(endObject());
-
-            final CodeBlock.Builder varInit = CodeBlock.builder();
-            if (!localAdapterNames.isEmpty()) {
-                for (final Map.Entry<AdapterInfo, String> a : localAdapterNames.entrySet()) {
-                    if (a.getKey().className.equals(a.getValue()) || a.getValue().equals("this"))
-                        continue;
-                    varInit.addStatement("final $T $L = $L", ClassName.bestGuess(a.getKey().className), a.getValue(), instanceOf(a.getKey()));
-                }
-            }
-            final List<ParameterSpec> genericParams = typeVariables.stream().map(param -> ParameterSpec.builder(parameterized(param, SERIALIZER), "var" + param.name, Modifier.FINAL).build()).collect(Collectors.toList());
-            builder.addMethod(MethodSpec.methodBuilder("write")
-                    .addTypeVariables(typeVariables)
-                    .addParameter(targetTypeName, "object", Modifier.FINAL)
-                    .addParameter(ClassName.get(getOutputTypeName()), "destination", Modifier.FINAL)
-                    .addParameters(genericParams)
-                    .addAnnotations(parameterized ? Collections.emptySet() : Collections.singleton(AnnotationSpec.builder(Override.class).build()))
-                    .addModifiers(Modifier.PUBLIC)
-                    .returns(TypeName.VOID)
-                    .addCode(varInit.add(code.build()).build())
-                    .build());
-
-            if (parameterized) {
-                builder.addMethod(MethodSpec.methodBuilder("apply")
-                        .addModifiers(Modifier.PUBLIC)
-                        .addTypeVariables(typeVariables)
-                        .addParameters(genericParams)
-                        .returns(parameterized(targetTypeName, SERIALIZER))
-                        .addCode(CodeBlock.builder()
-                                .addStatement("return $L", TypeSpec.anonymousClassBuilder("")
-                                        .addSuperinterface(parameterized(targetTypeName, SERIALIZER))
-                                        .addMethod(MethodSpec.methodBuilder("write")
-                                                .addParameter(targetTypeName, "object", Modifier.FINAL)
-                                                .addParameter(ClassName.get(getOutputTypeName()), "destination", Modifier.FINAL)
-                                                .returns(TypeName.VOID)
-                                                .addAnnotation(Override.class)
-                                                .addModifiers(Modifier.PUBLIC)
-                                                .addCode(CodeBlock.builder()
-                                                        .addStatement("$L.this.write(object, destination$L)", adapterClassName, genericParams.stream().map(param -> ", " + param.name).collect(Collectors.joining()))
-                                                        .build())
-                                                .build())
-                                        .build())
-                                .build())
-                        .build());
-            }
+            generateSerializer(targetType, fields, validator, adapterClassName, builder, validatorName, parameterized, typeVariables, targetTypeName);
         }
         if (parameterized && par && ser) {
             // apply for mapper
@@ -401,7 +139,9 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
                                             .addParameter(targetTypeName, "object", Modifier.FINAL)
                                             .addParameter(ClassName.get(getOutputTypeName()), "destination", Modifier.FINAL)
                                             .returns(TypeName.VOID)
+                                            .addAnnotation(Override.class)
                                             .addModifiers(Modifier.PUBLIC)
+                                            .addException(IOException.class)
                                             .addCode(CodeBlock.builder()
                                                     .addStatement("$L.this.write(object, destination$L)", adapterClassName, genericParams.stream().map(param -> ", " + param.name).collect(Collectors.joining()))
                                                     .build())
@@ -411,6 +151,7 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
                                             .returns(targetTypeName)
                                             .addAnnotation(Override.class)
                                             .addModifiers(Modifier.PUBLIC)
+                                            .addException(IOException.class)
                                             .addCode(CodeBlock.builder()
                                                     .addStatement("return $L.this.toObject(in$L)", adapterClassName, genericParams.stream().map(param -> ", " + param.name).collect(Collectors.joining()))
                                                     .build())
@@ -432,6 +173,355 @@ public abstract class SimpleJsonGenerator extends SimpleGenerator {
         builder.addFields(genericAdapterFields);
         JavaFile.builder(packageOf(targetType), builder.build()).build().writeTo(filer);
         return new GeneratedResultInfo(currentGenerated.adapter, par, ser);
+    }
+
+    private void generateParser(@NotNull TypeElement targetType,
+                                @NotNull Map<@NotNull String, @NotNull FieldData> fields,
+                                @Nullable ValidatorInfo validator,
+                                String adapterClassName,
+                                TypeSpec.Builder builder,
+                                String validatorName,
+                                boolean parameterized,
+                                List<TypeVariableName> typeVariables,
+                                TypeName targetTypeName) throws GeneratingException {
+        final CodeBlock.Builder code = CodeBlock.builder();
+        code.addStatement("final $1T res", targetType);
+        code.add(initialAdvance());
+        code.add("\n// start generated\n");
+        //region parser init
+        for (final Map.Entry<String, FieldData> field : fields.entrySet()) {
+            final String key = field.getKey();
+            final FieldData data = field.getValue();
+            final Setter setter = data.setters.get(0);
+            code.addStatement("$T _$L = " + setter.defaultValue, data.fieldType, key);
+            final AdapterInfo adapter = setter.adapter;
+            acceptAdapter(adapter, data.fieldType);
+        }
+        //endregion
+        //region parse loop
+        code.add("\n//region parsing\n")
+                .addStatement("int cnt = 0")
+                .beginControlFlow("while (cnt < $L)", fields.size())
+                .addStatement("final String name")
+                .add(nextName())
+                .beginControlFlow("if (name == null)")
+                .addStatement("break")
+                .nextControlFlow("else")
+                .beginControlFlow("switch (name)");
+        for (final Map.Entry<String, FieldData> field : fields.entrySet()) {
+            final String key = field.getKey();
+            final FieldData data = field.getValue();
+            final Setter setter = data.setters.get(0);
+            code.beginControlFlow("case $S:", key);
+            final CodeBlock.Builder generics = CodeBlock.builder();
+            for (final GenericTypeInfo gti : setter.genericArguments) {
+                try {
+                    generics.add(", " + buildApplication(gti));
+                } catch (WrappedException e) {
+                    e.unwrap();
+                }
+            }
+            final ConverterData converter = setter.converter;
+            if (converter != null) {
+                final String convName = adapterName(converter.converter);
+                if (converter.converter.instance == null) instanceless.add(converter.converter);
+                adapterNames.put(converter.converter, convName);
+                code.addStatement("_$L = $L.$L($L.toObject(in$L))", key, convName, converter.decodeName(), get(setter.adapter), generics.build());
+            } else {
+                code.addStatement("_$L = $L.toObject(in$L)", key, get(setter.adapter), generics.build());
+            }
+            code.addStatement("++cnt")
+                    .addStatement("break")
+                    .endControlFlow();
+        }
+        code.beginControlFlow("default:")
+                .addStatement("java.lang.System.out.println($S + name)", "unknown property: ")
+                .endControlFlow()  // default
+                .endControlFlow()  // switch
+                .endControlFlow()  // else
+                .endControlFlow(); // loop
+        code.add("\n//endregion\n");
+        //endregion
+        //region assembling
+        code.add("\n//region building\n");
+        for (final Map.Entry<String, FieldData> entry : fields.entrySet()) {
+            final FieldData data = entry.getValue();
+            if (data.required) {
+                final String def = data.setters.get(0).defaultValue;
+                final String intermediate = data.fieldType.getKind().isPrimitive() || def.equals("null") ? "def == _$L" : "def.equals(_$L)";
+                code.addStatement("if (" + intermediate + ") throw new IllegalStateException($S)", entry.getKey(), "Field " + entry.getKey() + " is required!");
+            }
+        }
+        final List<String> constParams = Generator.biggestConstructor(fields);
+        for (final String param : constParams) {
+            final FieldData data = fields.get(param);
+            if (data.validator != null) {
+                String instanceName = null;
+                if (data.validator instanceof ValidatorInfo.ValidatorClass) {
+                    final ValidatorInfo.ValidatorClass cv = (ValidatorInfo.ValidatorClass) data.validator;
+                    final AdapterInfo e = cv.asAdapterInfo();
+                    if (cv.instance == null) {
+                        instanceless.add(e);
+                    }
+                    instanceName = adapterName(e);
+                    adapterNames.put(e, instanceName);
+                }
+                code.add(data.validator.javaStatement(param, "constructor", targetTypeName.toString(), data.fieldType.toString(), '_' + param, instanceName))
+                        .add("\n");
+            }
+        }
+        code.addStatement("res = new $T($L)", targetType, joinParams(constParams));
+        final Set<String> remaining = new HashSet<>(fields.keySet());
+        remaining.removeAll(constParams);
+        for (final Map.Entry<String, FieldData> field : fields.entrySet()) {
+            final String key = field.getKey();
+            if (remaining.contains(key)) {
+                final ValidatorInfo v = field.getValue().validator;
+                for (final Setter setter : field.getValue().setters) {
+                    switch (setter.setterType) {
+                        case DIRECT:
+                            code.addStatement("res.$L = _$L", setter.setterName, key);
+                            break;
+                        case CLASSIC:
+                            code.addStatement("res.$L(_$L)", setter.setterName, key);
+                            break;
+                        case BULK:
+                            if (remaining.containsAll(setter.propertyNames)) {
+                                code.addStatement("res.$L($L)", setter.setterName, joinParams(setter.propertyNames));
+                                remaining.removeAll(setter.propertyNames);
+                            } else {
+                                continue;
+                            }
+                            break;
+                        case CONSTRUCTOR:
+                            continue;
+                    }
+                    if (v != null) {
+                        String instanceName = null;
+                        if (v instanceof ValidatorInfo.ValidatorClass) {
+                            final ValidatorInfo.ValidatorClass cv = (ValidatorInfo.ValidatorClass) v;
+                            final AdapterInfo e = cv.asAdapterInfo();
+                            if (cv.instance == null) {
+                                instanceless.add(e);
+                            }
+                            instanceName = adapterName(e);
+                            adapterNames.put(e, instanceName);
+                        }
+                        code.add(v.javaStatement(key, setter.setterName, targetTypeName.toString(), field.getValue().fieldType.toString(), '_' + key, instanceName))
+                                .add("\n");
+                    }
+                    remaining.remove(key);
+                    break;
+                }
+            }
+        }
+        if (!remaining.isEmpty())
+            throw new GeneratingException("Failed generation: cannot set " + remaining);
+        code.add("\n//endregion\n");
+        code.add(finalMove());
+        if (validator != null) {
+            code.add("\n");
+            code.add(validator.javaStatement("<top level>", targetTypeName.toString(), targetTypeName.toString(), targetType.toString(), "res", validatorName));
+            code.add("\n");
+        }
+        code.addStatement("return res");
+        //endregion
+        final CodeBlock.Builder varInit = CodeBlock.builder();
+        if (!localAdapterNames.isEmpty()) {
+            for (final Map.Entry<AdapterInfo, String> a : localAdapterNames.entrySet()) {
+                if (a.getKey().className.equals(a.getValue()) || a.getValue().equals("this"))
+                    continue;
+                varInit.addStatement("final $T $L = $L", ClassName.bestGuess(a.getKey().className), a.getValue(), instanceOf(a.getKey()));
+            }
+        }
+        final List<ParameterSpec> genericParams = typeVariables.stream().map(param -> ParameterSpec.builder(parameterized(param, PARSER), "var" + param.name, Modifier.FINAL).build()).collect(Collectors.toList());
+        builder.addMethod(MethodSpec.methodBuilder("toObject")
+                .addTypeVariables(typeVariables)
+                .addParameter(ClassName.get(getInputTypeName()), "in", Modifier.FINAL)
+                .addParameters(genericParams)
+                .returns(targetTypeName)
+                .addException(IOException.class)
+                .addAnnotations(parameterized ? Collections.emptySet() : Collections.singleton(AnnotationSpec.builder(Override.class).build()))
+                .addModifiers(Modifier.PUBLIC)
+                .addCode(varInit.add(code.build()).build())
+                .build());
+
+        if (parameterized) {
+            builder.addMethod(MethodSpec.methodBuilder("apply")
+                    .addModifiers(Modifier.PUBLIC)
+                    .addTypeVariables(typeVariables)
+                    .addParameters(genericParams)
+                    .returns(parameterized(targetTypeName, PARSER))
+                    .addCode(CodeBlock.builder()
+                            .addStatement("return $L", TypeSpec.anonymousClassBuilder("")
+                                    .addSuperinterface(parameterized(targetTypeName, PARSER))
+                                    .addMethod(MethodSpec.methodBuilder("toObject")
+                                            .addParameter(ClassName.get(getInputTypeName()), "in", Modifier.FINAL)
+                                            .returns(targetTypeName)
+                                            .addAnnotation(Override.class)
+                                            .addModifiers(Modifier.PUBLIC)
+                                            .addException(IOException.class)
+                                            .addCode(CodeBlock.builder()
+                                                    .addStatement("return $L.this.toObject(in$L)", adapterClassName, genericParams.stream().map(param -> ", " + param.name).collect(Collectors.joining()))
+                                                    .build())
+                                            .build())
+                                    .build())
+                            .build())
+                    .build());
+        }
+    }
+
+    private void generateSerializer(@NotNull TypeElement targetType, @NotNull Map<@NotNull String, @NotNull FieldData> fields, @Nullable ValidatorInfo validator, String adapterClassName, TypeSpec.Builder builder, String validatorName, boolean parameterized, List<TypeVariableName> typeVariables, TypeName targetTypeName) throws GeneratingException {
+        final CodeBlock.Builder code = CodeBlock.builder();
+        if (validator != null) {
+            code.add(validator.javaStatement("<top level>", targetTypeName.toString(), targetTypeName.toString(), targetType.toString(), "object", validatorName));
+        }
+        final CodeBlock writeDelimiter;
+        if (writeDelimiter().isEmpty()) {
+            writeDelimiter = CodeBlock.of("");
+        } else {
+            code.addStatement("boolean __delimiter = false");
+            writeDelimiter = CodeBlock.builder()
+                    .beginControlFlow("if (__delimiter)")
+                    .addStatement(writeDelimiter())
+                    .nextControlFlow("else")
+                    .addStatement("__delimiter = true")
+                    .endControlFlow()
+                    .build();
+        }
+        code.add(startObject());
+        for (final Map.Entry<String, FieldData> field : fields.entrySet()) {
+            final String key = field.getKey();
+            final FieldData data = field.getValue();
+            code.add("\n//region " + key + "\n");
+            final Getter getter = data.getters.get(0);
+            final String javaGetter = getter.isMethod ? getter.getterName + "()" : getter.getterName;
+            code.addStatement("final $T _$L = object.$L", data.fieldType, key, javaGetter);
+            if (!data.required) {
+                final String def = getter.defaultValue;
+                final boolean primitive = data.fieldType.getKind().isPrimitive();
+                final boolean isNull = def.equals("null");
+                final String condition;
+                if (primitive || isNull) {
+                    if (primitive && isNull) {
+                        switch (data.fieldType.getKind()) {
+                            case BOOLEAN:
+                                condition = "!_$L";
+                                break;
+                            case BYTE:
+                            case SHORT:
+                            case INT:
+                            case LONG:
+                                condition = "0 != _$L";
+                                break;
+                            case CHAR:
+                                condition = "'\0' != _$L";
+                                break;
+                            case FLOAT:
+                            case DOUBLE:
+                                condition = "0.0 != _$L";
+                                break;
+                            default:
+                                // impossible,
+                                env.getMessager().printMessage(Diagnostic.Kind.ERROR, data.fieldType + " is primitive, but has kind " + data.fieldType.getKind());
+                                condition = "true";
+                        }
+                    } else {
+                        condition = def + " != _$L";
+                    }
+                } else {
+                    condition = "!java.util.Objects.equals(_$L, " + def + ")";
+                }
+                code.beginControlFlow("if (" + condition + ")", key);
+            }
+            if (data.validator != null) {
+                String instanceName = null;
+                if (data.validator instanceof ValidatorInfo.ValidatorClass) {
+                    final ValidatorInfo.ValidatorClass cv = (ValidatorInfo.ValidatorClass) data.validator;
+                    final AdapterInfo e = cv.asAdapterInfo();
+                    if (cv.instance == null) {
+                        instanceless.add(e);
+                    }
+                    instanceName = adapterName(e);
+                    adapterNames.put(e, instanceName);
+                }
+                code.add(data.validator.javaStatement(key, javaGetter, targetTypeName.toString(), field.getValue().fieldType.toString(), '_' + key, instanceName))
+                        .add("\n");
+            }
+            code.add(writeDelimiter);
+            code.add(writeProperty(key));
+            final String adaName = acceptAdapter(getter.adapter, data.fieldType);
+            final CodeBlock.Builder generics = CodeBlock.builder();
+            for (final GenericTypeInfo gti : getter.genericArguments) {
+                try {
+                    generics.add(", " + buildApplication(gti));
+                } catch (WrappedException e) {
+                    e.unwrap();
+                }
+            }
+            final CodeBlock.Builder expr = CodeBlock.builder();
+            if (getter.converter != null) {
+                final String convertName = adapterName(getter.converter.converter);
+                adapterNames.put(getter.converter.converter, convertName);
+                if (getter.converter.converter.instance == null)
+                    instanceless.add(getter.converter.converter);
+                expr.add("$L.$L(_$L)", convertName, getter.converter.encodeName(), key);
+            } else {
+                expr.add("_$L", key);
+            }
+            code.addStatement("$L.write($L, destination$L)", adaName, expr.build(), generics.build());
+            if (!data.required) {
+                code.endControlFlow();
+            }
+            code.add("\n//endregion\n");
+        }
+        code.add(endObject());
+
+        final CodeBlock.Builder varInit = CodeBlock.builder();
+        if (!localAdapterNames.isEmpty()) {
+            for (final Map.Entry<AdapterInfo, String> a : localAdapterNames.entrySet()) {
+                if (a.getKey().className.equals(a.getValue()) || a.getValue().equals("this"))
+                    continue;
+                varInit.addStatement("final $T $L = $L", ClassName.bestGuess(a.getKey().className), a.getValue(), instanceOf(a.getKey()));
+            }
+        }
+        final List<ParameterSpec> genericParams = typeVariables.stream().map(param -> ParameterSpec.builder(parameterized(param, SERIALIZER), "var" + param.name, Modifier.FINAL).build()).collect(Collectors.toList());
+        builder.addMethod(MethodSpec.methodBuilder("write")
+                .addTypeVariables(typeVariables)
+                .addParameter(targetTypeName, "object", Modifier.FINAL)
+                .addParameter(ClassName.get(getOutputTypeName()), "destination", Modifier.FINAL)
+                .addParameters(genericParams)
+                .addAnnotations(parameterized ? Collections.emptySet() : Collections.singleton(AnnotationSpec.builder(Override.class).build()))
+                .addModifiers(Modifier.PUBLIC)
+                .returns(TypeName.VOID)
+                .addException(IOException.class)
+                .addCode(varInit.add(code.build()).build())
+                .build());
+
+        if (parameterized) {
+            builder.addMethod(MethodSpec.methodBuilder("apply")
+                    .addModifiers(Modifier.PUBLIC)
+                    .addTypeVariables(typeVariables)
+                    .addParameters(genericParams)
+                    .returns(parameterized(targetTypeName, SERIALIZER))
+                    .addCode(CodeBlock.builder()
+                            .addStatement("return $L", TypeSpec.anonymousClassBuilder("")
+                                    .addSuperinterface(parameterized(targetTypeName, SERIALIZER))
+                                    .addMethod(MethodSpec.methodBuilder("write")
+                                            .addParameter(targetTypeName, "object", Modifier.FINAL)
+                                            .addParameter(ClassName.get(getOutputTypeName()), "destination", Modifier.FINAL)
+                                            .returns(TypeName.VOID)
+                                            .addAnnotation(Override.class)
+                                            .addModifiers(Modifier.PUBLIC)
+                                            .addException(IOException.class)
+                                            .addCode(CodeBlock.builder()
+                                                    .addStatement("$L.this.write(object, destination$L)", adapterClassName, genericParams.stream().map(param -> ", " + param.name).collect(Collectors.joining()))
+                                                    .build())
+                                            .build())
+                                    .build())
+                            .build())
+                    .build());
+        }
     }
 
     @NotNull

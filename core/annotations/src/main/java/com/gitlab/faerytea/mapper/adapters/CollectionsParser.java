@@ -1,5 +1,7 @@
 package com.gitlab.faerytea.mapper.adapters;
 
+import java.io.IOException;
+
 /**
  * Parsers for generic collections.
  * If serialized form have different notation for
@@ -14,6 +16,7 @@ package com.gitlab.faerytea.mapper.adapters;
  * @param <C>     raw type of collection
  * @param <Input> input type
  */
+@SuppressWarnings("rawtypes")
 public interface CollectionsParser<C extends Iterable, Input> {
     /**
      * Main parser method. For {@code @DefaultParser}s
@@ -25,7 +28,7 @@ public interface CollectionsParser<C extends Iterable, Input> {
      * @param <T>        type of items
      * @return properly typed collection
      */
-    <T> C toObject(Input source, Parser<T, Input> itemParser);
+    <T> C toObject(Input source, Parser<T, Input> itemParser) throws IOException;
 
     /**
      * Way to create parser. For {@code @DefaultParser}s

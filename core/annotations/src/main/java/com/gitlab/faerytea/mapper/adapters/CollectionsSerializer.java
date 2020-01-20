@@ -1,5 +1,7 @@
 package com.gitlab.faerytea.mapper.adapters;
 
+import java.io.IOException;
+
 /**
  * Serializers for generic collections.
  * If serialized form have different notation for
@@ -14,6 +16,7 @@ package com.gitlab.faerytea.mapper.adapters;
  * @param <C>      raw type of collection
  * @param <Output> output type
  */
+@SuppressWarnings("rawtypes")
 public interface CollectionsSerializer<C extends Iterable, Output> {
     /**
      * Main serializer method. Due to limitations of
@@ -24,7 +27,7 @@ public interface CollectionsSerializer<C extends Iterable, Output> {
      * @param to             serialized data
      * @param <T>            type of items
      */
-    <T> void write(C object, Output to, Serializer<T, Output> itemSerializer);
+    <T> void write(C object, Output to, Serializer<T, Output> itemSerializer) throws IOException;
 
     /**
      * Way to create serializer. For {@code @DefaultSerializer}s

@@ -1,8 +1,13 @@
 package com.gitlab.faerytea.mapper.processor
 
 import com.gitlab.faerytea.mapper.annotations.Property
+import com.gitlab.faerytea.mapper.gen.InstanceData
+import com.gitlab.faerytea.mapper.gen.ValidatorInfo
+import com.gitlab.faerytea.mapper.validation.Validate
+import com.gitlab.faerytea.mapper.validation.Validator
 import java.io.PrintWriter
 import java.io.StringWriter
+import javax.lang.model.element.Element
 import javax.lang.model.element.ExecutableElement
 import javax.lang.model.element.TypeElement
 import javax.lang.model.type.DeclaredType
@@ -55,3 +60,16 @@ fun TypeElement.methods(): List<ExecutableElement> {
 }
 
 fun Throwable.stringTrace(): StringBuffer? = StringWriter().apply { this@stringTrace.printStackTrace(PrintWriter(this, true)) }.buffer
+
+internal fun validator(e: Element, instances: HashMap<String, InstanceData>): ValidatorInfo? = e.getAnnotation(Validate::class.java)?.run {
+    val name = try {
+        this.validator.safeCanonicalName()
+    } catch (e: MirroredTypeException) {
+        ((e.typeMirror as DeclaredType).asElement() as TypeElement).qualifiedName
+    }.toString()
+    return if (name == Validator::class.java.canonicalName.toString()) {
+        if (this.value.isEmpty()) null else ValidatorInfo.ValidatorString(this.value)
+    } else {
+        ValidatorInfo.ValidatorClass(name, instances[name])
+    }
+}

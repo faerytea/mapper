@@ -29,7 +29,7 @@ class MappableVisitor(
         if (params.isEmpty() && !(retType.kind == TypeKind.VOID && retType is NoType)) {
             // got a getter
             val converterData = converter(e)
-            val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), retType, checkRequired(e)) })
+            val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), retType, checkRequired(e), validator(e, processor.instances)) })
             builder.getters.add(Getter(
                     builder.name,
                     e.simpleName.toString(),
@@ -44,7 +44,7 @@ class MappableVisitor(
             val converterData = converter(e)
             val arg = params[0]
             val argType = arg.asType()
-            val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), argType, checkRequired(e)) })
+            val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), argType, checkRequired(e), validator(e, processor.instances)) })
             builder.setters.add(Setter(
                     builder.name,
                     e.simpleName.toString(),
@@ -70,14 +70,22 @@ class MappableVisitor(
                 val params = e.parameters
                 processor.printWriter.appendln("params $params")
                 processor.printWriter.flush()
-                data class Prop(val name: String, val type: TypeMirror, val default: String, val required: Boolean, val parser: AdapterInfo, val converter: ConverterData?)
+                data class Prop(
+                        val name: String,
+                        val type: TypeMirror,
+                        val default: String,
+                        val required: Boolean,
+                        val parser: AdapterInfo,
+                        val converter: ConverterData?,
+                        val validator: ValidatorInfo?
+                )
                 val propData = params.map { prop ->
                     val converterData = converter(prop)
                     val default = DefaultsVisitor.visit(prop)
                     val propTp = prop.asType()
                     prop.getAnnotation(Property::class.java)?.run {
-                        Prop(this.value.ifEmpty { prop.simpleName.toString() }, propTp, default, checkRequired(prop), mapperFor(this, converterData?.from ?: propTp).first, converterData)
-                    } ?: Prop(prop.simpleName.toString(), propTp, default, checkRequired(prop), parser(converterData?.from ?: propTp), converterData)
+                        Prop(this.value.ifEmpty { prop.simpleName.toString() }, propTp, default, checkRequired(prop), mapperFor(this, converterData?.from ?: propTp).first, converterData, validator(prop, processor.instances))
+                    } ?: Prop(prop.simpleName.toString(), propTp, default, checkRequired(prop), parser(converterData?.from ?: propTp), converterData, validator(prop, processor.instances))
                 }
                 processor.printWriter.appendln("propData: $propData")
                 processor.printWriter.flush()
@@ -88,7 +96,7 @@ class MappableVisitor(
                 processor.printWriter.appendln("class name: $className")
                 processor.printWriter.flush()
                 for (data in propData) {
-                    val builder = p.getOrPut(data.name, { FieldDataBuilder(data.name, data.type, data.required) })
+                    val builder = p.getOrPut(data.name, { FieldDataBuilder(data.name, data.type, data.required, data.validator) })
                     builder.setters += Setter(
                             propNames,
                             className,
@@ -121,7 +129,7 @@ class MappableVisitor(
                 for (i in params.indices) {
                     val name = names[i]
                     val tp = params[i].asType()
-                    val builder = p.getOrPut(name, { FieldDataBuilder(name, tp, checkRequired(params[i])) })
+                    val builder = p.getOrPut(name, { FieldDataBuilder(name, tp, checkRequired(params[i]), validator(params[i], processor.instances)) })
                     val converter = converters[i]
                     builder.setters += Setter(
                             namesList,
@@ -165,7 +173,7 @@ class MappableVisitor(
             }
             Modifier.FINAL -> {
                 // read-only
-                val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), tp, checkRequired(e)) })
+                val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), tp, checkRequired(e), validator(e, processor.instances)) })
                 builder.getters.add(Getter(
                         builder.name,
                         e.simpleName.toString(),
@@ -178,7 +186,7 @@ class MappableVisitor(
             }
             else -> {
                 // read and write
-                val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), tp, checkRequired(e)) })
+                val builder = p.getOrPut(name.toString(), { FieldDataBuilder(name.toString(), tp, checkRequired(e), validator(e, processor.instances)) })
                 builder.getters.add(Getter(
                         builder.name,
                         e.simpleName.toString(),

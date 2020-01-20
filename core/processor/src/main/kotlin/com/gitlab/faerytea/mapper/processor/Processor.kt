@@ -3,6 +3,7 @@ package com.gitlab.faerytea.mapper.processor
 import com.gitlab.faerytea.mapper.adapters.*
 import com.gitlab.faerytea.mapper.annotations.*
 import com.gitlab.faerytea.mapper.gen.*
+import com.gitlab.faerytea.mapper.validation.Validate
 import java.io.File
 import java.io.PrintWriter
 import java.util.function.BiFunction
@@ -190,6 +191,7 @@ class Processor : AbstractProcessor() {
                 val method = element as ExecutableElement
                 if (method.parameters.isNotEmpty()) {
                     m.printMessage(L.WARNING, "instance getter have parameters; ignored", element)
+                    return
                 }
                 method.returnType.takeUnless { it.kind == TypeKind.VOID } ?: run {
                     m.printMessage(L.WARNING, "instance getter returns void; ignored", element)
@@ -234,8 +236,8 @@ class Processor : AbstractProcessor() {
                 printWriter.appendln("got ${c.simpleName}")
                 try {
                     val mappings = c.accept(elementVisitor, HashMap())
-                            .mapValues { (_, v) -> FieldData(v.name, v.tp, v.getters, v.setters, v.required) }
-                    val generateResult = generator.generateFor(c, mappings)
+                            .mapValues { (_, v) -> FieldData(v.name, v.tp, v.getters, v.setters, v.required, v.validator) }
+                    val generateResult = generator.generateFor(c, mappings, validator(c, instances))
                     if (generateResult.canParse)
                         parsers[types.erasure(cAsType)] = generateResult.adapter
                     if (generateResult.canSerialize)

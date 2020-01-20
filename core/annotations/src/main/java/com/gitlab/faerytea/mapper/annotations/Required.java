@@ -17,6 +17,7 @@ import java.lang.annotation.Target;
  * if and only if there is no {@linkplain Default Default.*} annotations.
  *
  * @see Default
+ * @see com.gitlab.faerytea.mapper.validation.Validate
  */
 @Documented
 @Retention(RetentionPolicy.SOURCE)

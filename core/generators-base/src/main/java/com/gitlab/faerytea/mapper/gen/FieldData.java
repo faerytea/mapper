@@ -1,6 +1,7 @@
 package com.gitlab.faerytea.mapper.gen;
 
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 
@@ -25,18 +26,22 @@ public final class FieldData {
     @NotNull
     public final List<@NotNull Setter> setters;
     public final boolean required;
+    @Nullable
+    public final ValidatorInfo validator;
 
     public FieldData(
             @NotNull String fieldName,
             @NotNull TypeMirror fieldType,
             @NotNull List<@NotNull Getter> getters,
             @NotNull List<@NotNull Setter> setters,
-            boolean required) {
+            boolean required,
+            @Nullable ValidatorInfo validator) {
         this.fieldName = fieldName;
         this.fieldType = fieldType;
         this.getters = getters;
         this.setters = setters;
         this.required = required;
+        this.validator = validator;
     }
 
     @NotNull

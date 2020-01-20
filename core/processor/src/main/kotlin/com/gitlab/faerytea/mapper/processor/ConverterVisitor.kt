@@ -187,4 +187,5 @@ private fun TypeElement.allInterfaces(): MutableList<TypeMirror> {
 
 private fun Elements.mirror(cls: KClass<*>): TypeMirror? = getTypeElement(cls.java.name)?.asType()
 
+@Suppress("NOTHING_TO_INLINE")
 private inline fun <T> T.printIt(): T = this.also { println(it) }
