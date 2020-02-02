@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'java-library'
     id 'maven-publish'
+    id 'com.jfrog.bintray' version '1.8.4'
 }
 
 group 'com.gitlab.faerytea.mapper'
@@ -16,7 +17,7 @@ repositories {
 
 dependencies {
     implementation 'org.jetbrains:annotations:16.0.2'
-    api 'com.gitlab.faerytea.mapper:annotations:+'
+    api 'com.gitlab.faerytea.mapper:annotations:0.8'
     api 'com.squareup:javapoet:1.11.1'
 }
 
@@ -25,12 +26,36 @@ task sourcesJar(type: Jar) {
     from sourceSets.main.allJava
 }
 
+task javadocJar(type: Jar) {
+    classifier = 'javadoc'
+    from javadoc.destinationDir
+}
+
+bintray {
+    user = rootProject.bintrayUsername
+    key = rootProject.bintrayKey
+    pkg {
+        repo = 'jars'
+        name = project.name
+        licenses = ['LGPL-3.0']
+        vcsUrl = 'https://gitlab.com/faerytea/mapper.git'
+        version {
+            name = project.version
+            desc = 'Alpha release'
+            released = new Date(1580623678585L)
+            vcsTag = 'alpha'
+        }
+    }
+    publications = ['mapperGeneratorsBase']
+}
+
 publishing {
     publications {
         mapperGeneratorsBase(MavenPublication) {
             from components.java
 
             artifact sourcesJar
+            artifact javadocJar
         }
     }
 }

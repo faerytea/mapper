@@ -2,6 +2,7 @@ plugins {
     id 'java'
     id 'java-library'
     id 'maven-publish'
+    id 'com.jfrog.bintray' version '1.8.4'
 }
 
 group 'com.gitlab.faerytea.mapper'
@@ -24,6 +25,26 @@ task sourcesJar(type: Jar) {
 task javadocJar(type: Jar) {
     classifier = 'javadoc'
     from javadoc.destinationDir
+}
+
+bintray {
+    user = rootProject.bintrayUsername
+    key = rootProject.bintrayKey
+    println "${bintray.user} # ${bintray.key}"
+    pkg {
+        repo = 'jars'
+        name = project.name
+        println project.name
+        licenses = [ 'Apache-2.0' ]
+        vcsUrl = 'https://gitlab.com/faerytea/mapper.git'
+        version {
+            name = project.version
+            desc = 'Alpha release'
+            released = new Date(1580623678585L)
+            vcsTag = 'alpha'
+        }
+    }
+    publications = ['mapperAnnotations']
 }
 
 publishing {

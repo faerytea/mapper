@@ -1,6 +1,7 @@
 plugins {
     id 'org.jetbrains.kotlin.jvm' version '1.3.31'
     id 'maven-publish'
+    id 'com.jfrog.bintray' version '1.8.4'
 }
 
 group 'com.gitlab.faerytea.mapper'
@@ -25,10 +26,41 @@ compileTestKotlin {
     kotlinOptions.jvmTarget = "1.8"
 }
 
+task sourcesJar(type: Jar) {
+    classifier = 'sources'
+    from sourceSets.main.allJava
+}
+
+task javadocJar(type: Jar) {
+    classifier = 'javadoc'
+    from javadoc.destinationDir
+}
+
+bintray {
+    user = rootProject.bintrayUsername
+    key = rootProject.bintrayKey
+    pkg {
+        repo = 'jars'
+        name = project.name
+        licenses = [ 'GPL-3.0-or-later' ]
+        vcsUrl = 'https://gitlab.com/faerytea/mapper.git'
+        version {
+            name = project.version
+            desc = 'Alpha release'
+            released = new Date(1580623678585L)
+            vcsTag = 'alpha'
+        }
+    }
+    publications = ['mapperProcessor']
+}
+
 publishing {
     publications {
         mapperProcessor(MavenPublication) {
             from components.java
+
+            artifact sourcesJar
+            artifact javadocJar
         }
     }
 }
