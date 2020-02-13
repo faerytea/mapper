@@ -75,14 +75,8 @@ class Processor : AbstractProcessor() {
     private lateinit var defaultArrayParserType: DeclaredType
     private lateinit var defaultArraySerializerType: DeclaredType
     internal lateinit var objectArrayType: ArrayType
-//    private lateinit var defaultCollectionParserType: DeclaredType
-//    private lateinit var defaultCollectionSerializerType: DeclaredType
-
-    internal val printWriter = PrintWriter(File("/tmp/test.txt"))
 
     override fun init(processingEnvironment: ProcessingEnvironment) {
-        printWriter.println("init called")
-        printWriter.flush()
         super.init(processingEnvironment)
         defaultParserType = elements.getTypeElement(Parser::class.safeCanonicalName()).asType() as DeclaredType
         defaultParserAction = ElementFilter.methodsIn(elements.getAllMembers(elements.getTypeElement(Parser::class.safeCanonicalName()))).last()
@@ -104,18 +98,12 @@ class Processor : AbstractProcessor() {
         defaultArrayParserType = elements.getTypeElement(ArrayParser::class.safeCanonicalName()).asType() as DeclaredType
         defaultArraySerializerType = elements.getTypeElement(ArraySerializer::class.safeCanonicalName()).asType() as DeclaredType
         objectArrayType = types.getArrayType(types.getDeclaredType(elements.getTypeElement("java.lang.Object")))
-//        defaultCollectionParserType = elements.getTypeElement(CollectionsParser::class.safeCanonicalName()).asType() as DeclaredType
-//        defaultCollectionSerializerType = elements.getTypeElement(CollectionsSerializer::class.safeCanonicalName()).asType() as DeclaredType
-        printWriter.appendln("def par meth ${ElementFilter.methodsIn(elements.getTypeElement(Parser::class.safeCanonicalName()).enclosedElements)}")
-        printWriter.appendln("def ser meth ${ElementFilter.methodsIn(elements.getTypeElement(Serializer::class.safeCanonicalName()).enclosedElements)}")
-        printWriter.appendln("def parse: $defaultParserType, def ser: $defaultSerializerType")
         val name = processingEnvironment.options["mapperGeneratorName"]
         val cls: Class<out Generator>? = try {
             val classLoader = javaClass.classLoader
             @Suppress("UNCHECKED_CAST")
             classLoader.loadClass(name) as Class<Generator>
         } catch (e: Throwable) {
-            e.printStackTrace(printWriter)
             val msg = when (e) {
                 is ClassCastException, is ClassNotFoundException, is LinkageError, is ExceptionInInitializerError -> "Mapper generator is disabled due to ${e.localizedMessage}"
                 is NullPointerException -> "No mapping generators defined"
@@ -141,54 +129,50 @@ class Processor : AbstractProcessor() {
     }
 
     override fun process(annotations: MutableSet<out TypeElement>, roundEnv: RoundEnvironment): Boolean {
-        printWriter.appendln("process called")
-        printWriter.flush()
         if (!ready) return false
-        if (roundEnv.processingOver()) {
-            generator.writeEpilogue()
-            return true
-        }
-        printWriter.appendln("start")
-        var shouldGenerate = false
-        for (annotation in annotations) {
-            printWriter.appendln("got ${annotation.qualifiedName}")
-            when (val annotationName = annotation.qualifiedName.toString()) {
-                DefaultMapper::class.java.name, DefaultParser::class.java.name, DefaultSerializer::class.java.name -> {
-                    for (e in roundEnv.getElementsAnnotatedWith(annotation)) {
-                        printWriter.appendln("processing $e (${e.simpleName})")
-                        if (e.kind.isClass) {
-                            handleDefaultMappers(annotationName, e as TypeElement)
-                        } else {
-                            m.printMessage(L.ERROR, "${e.simpleName} is not a class, but annotated as DefaultMapper")
+        try {
+            if (roundEnv.processingOver()) {
+                generator.writeEpilogue()
+                return true
+            }
+            var shouldGenerate = false
+            for (annotation in annotations) {
+                when (val annotationName = annotation.qualifiedName.toString()) {
+                    DefaultMapper::class.java.name, DefaultParser::class.java.name, DefaultSerializer::class.java.name -> {
+                        for (e in roundEnv.getElementsAnnotatedWith(annotation)) {
+                            if (e.kind.isClass) {
+                                handleDefaultMappers(annotationName, e as TypeElement)
+                            } else {
+                                m.printMessage(L.ERROR, "${e.simpleName} is not a class, but annotated as DefaultMapper")
+                            }
                         }
-                        printWriter.flush()
                     }
-                }
-                Instance::class.java.name -> {
-                    for (e in roundEnv.getElementsAnnotatedWith(annotation)) {
-                        handleInstance(e)
+                    Instance::class.java.name -> {
+                        for (e in roundEnv.getElementsAnnotatedWith(annotation)) {
+                            handleInstance(e)
+                        }
                     }
-                }
-                Mappable::class.java.name -> shouldGenerate = true
-            }
-        }
-        // apply instances
-        val replacer = BiFunction<TypeMirror, AdapterInfo, AdapterInfo> { _, a ->
-            if (a.instance == null) {
-                instances[a.className]?.let {
-                    return@BiFunction AdapterInfo(a.className, it)
+                    Mappable::class.java.name -> shouldGenerate = true
                 }
             }
-            return@BiFunction a
-        }
-        serializers.replaceAll(replacer)
-        parsers.replaceAll(replacer)
-        printWriter.appendln("start mappable with:")
-        printWriter.appendln("\tserializers: $serializers")
-        printWriter.appendln("\tparsers: $parsers")
-        printWriter.flush()
+            // apply instances
+            val replacer = BiFunction<TypeMirror, AdapterInfo, AdapterInfo> { _, a ->
+                if (a.instance == null) {
+                    instances[a.className]?.let {
+                        return@BiFunction AdapterInfo(a.className, it)
+                    }
+                }
+                return@BiFunction a
+            }
+            serializers.replaceAll(replacer)
+            parsers.replaceAll(replacer)
+            m.printMessage(L.NOTE, "start mappable with:\n\tserializers: $serializers\n\tparsers: $parsers")
 
-        return shouldGenerate then generate(ElementFilter.typesIn(roundEnv.getElementsAnnotatedWith(Mappable::class.java)))
+            return shouldGenerate then generate(ElementFilter.typesIn(roundEnv.getElementsAnnotatedWith(Mappable::class.java)))
+        } catch (e: Exception) {
+            m.printMessage(L.ERROR, "Processing aborted due to ${e.localizedMessage}\n${e.stringTrace()}");
+            return false
+        }
     }
 
     private fun handleInstance(element: Element) {
@@ -242,16 +226,12 @@ class Processor : AbstractProcessor() {
         val missed = HashMap<String, String>()
         var changed: Boolean
         do {
-            printWriter.appendln("start round mappable with:")
-            printWriter.appendln("\tserializers: $serializers")
-            printWriter.appendln("\tparsers: $parsers")
-            printWriter.flush()
             changed = false
             for (c in mappables) {
                 val cAsType = c.asType()
                 val className = cAsType.toString()
                 if (className in generated) continue
-                printWriter.appendln("got ${c.simpleName}")
+                m.printMessage(L.OTHER, "got ${c.simpleName}")
                 try {
                     val mappableAnnotation = c.getAnnotation(Mappable::class.java)!!
                     val onUnknown = try {
@@ -288,30 +268,25 @@ class Processor : AbstractProcessor() {
                         serializers[types.erasure(cAsType)] = generateResult.adapter
                     generated.add(className)
                     changed = true
-                    printWriter.appendln("$generateResult was generated for $className")
+                    m.printMessage(L.OTHER, "$generateResult was generated for $className")
                 } catch (e: TypeNotFoundException) {
                     missed[className] = e.key.toString()
-                    printWriter.appendln("$className is missing for ${e.key}")
+                    m.printMessage(L.OTHER, "$className is missing for ${e.key}")
                 } catch (e: Exception) {
                     m.printMessage(L.ERROR, "Generator $generator failed to generate adapter for ${c.qualifiedName}: ${e.stringTrace()}", c)
-                    printWriter.appendln("${e.stringTrace()} caught!")
                 }
             }
-            printWriter.flush()
             missed -= generated
             // break circulars
             if (missed.isNotEmpty()) {
-                printWriter.appendln("breaking circulars for $missed")
+                m.printMessage(L.OTHER, "breaking circulars for $missed")
                 val pool = HashSet<String>(missed.keys)
                 val stack = ArrayList<String>(missed.size - 1)
                 while (pool.isNotEmpty()) {
-                    printWriter.appendln("current pool is $pool")
                     stack.add(pool.first())
                     while (stack.isNotEmpty()) {
-                        printWriter.appendln("current stack is $stack")
                         val key = stack.last()
                         val value = missed[key]
-                        printWriter.appendln("got $key -> $value")
                         if (value !in pool) {
                             pool.removeAll(stack)
                             stack.clear()
@@ -319,12 +294,10 @@ class Processor : AbstractProcessor() {
                             value!!
                             val index = stack.indexOf(value)
                             if (index == -1) {
-                                printWriter.appendln("$value not found in stack")
                                 stack.add(value)
                             } else {
                                 // found circular
                                 val circle = stack.subList(index, stack.size)
-                                printWriter.appendln("$value is found in stack, circle is $circle")
                                 m.printMessage(L.WARNING, "Found circular dependency. Generated classes may be broken. Classes: $circle")
                                 for (name in circle) {
                                     val typeElement = elements.getTypeElement(name)
@@ -334,10 +307,9 @@ class Processor : AbstractProcessor() {
                                         parsers[type] = generateResult.adapter
                                     if (generateResult.canSerialize)
                                         serializers[type] = generateResult.adapter
-                                    printWriter.appendln("fake $generateResult generated for $name")
+                                    m.printMessage(L.OTHER, "fake $generateResult generated for $name")
                                 }
                                 generator.notifyCircularDependency(circle.map { elements.getTypeElement(it) });
-                                printWriter.flush()
                                 pool.removeAll(circle)
                                 circle.clear()
                             }
@@ -345,12 +317,9 @@ class Processor : AbstractProcessor() {
                     }
                 }
             }
-            printWriter.flush()
         } while (changed)
         if (generated.isEmpty() && missed.isNotEmpty())
             m.printMessage(L.ERROR, "Generator $generator failed to generate at least one mapper (mappers for ${missed.keys} aren't generated)")
-        printWriter.appendln("done.")
-        printWriter.flush()
         return missed.isEmpty()
     }
 
@@ -358,16 +327,12 @@ class Processor : AbstractProcessor() {
     private fun handleDefaultMappers(annotationName: String, mapper: TypeElement) {
         val isParser = annotationName != DefaultSerializer::class.java.toString()
         val isSerializer = annotationName != DefaultParser::class.java.toString()
-        printWriter.appendln("isParser: $isParser; isSerializer: $isSerializer")
         assert(isParser || isSerializer)
         val mapperAsDeclaredType = types.getDeclaredType(mapper)
-        printWriter.appendln("$mapper, $mapperAsDeclaredType")
         val isObjectParser = types.isAssignable(mapperAsDeclaredType, types.erasure(defaultParserType))
         val isObjectSerializer = types.isAssignable(mapperAsDeclaredType, types.erasure(defaultSerializerType))
-        printWriter.appendln("isObjectParser: $isObjectParser; isObjectSerializer: $isObjectSerializer")
         if (isObjectParser || isObjectSerializer) {
             if (isParser && isObjectParser) {
-                printWriter.flush()
                 val actuallyAType = (types.asMemberOf(mapperAsDeclaredType, defaultParserAction) as ExecutableType).returnType
                 parsers.put(types.erasure(actuallyAType), AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
                     m.printMessage(L.WARNING, "Mapper for $actuallyAType has many default mappers! It was $it, now replaced by ${mapper.qualifiedName}.")
@@ -381,11 +346,8 @@ class Processor : AbstractProcessor() {
             }
         } else {
             var found = false
-            printWriter.appendln("not object; $mapperAsDeclaredType")
             for ((i, tp) in defaultSerializerTypePrim) {
-                printWriter.appendln("default serializers: $i for $tp")
                 if (types.isAssignable(mapperAsDeclaredType, types.erasure(i))) {
-                    printWriter.appendln("assignable!")
                     serializers.put(types.erasure(tp), AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
                         m.printMessage(L.WARNING, "Mapper for $tp has many default mappers! It was ${it.className}, now replaced by ${mapper.qualifiedName}.")
                     }
@@ -393,9 +355,7 @@ class Processor : AbstractProcessor() {
                 }
             }
             for ((i, tp) in defaultParserTypePrim) {
-                printWriter.appendln("default parsers: $i for $tp")
                 if (types.isAssignable(mapperAsDeclaredType, types.erasure(i))) {
-                    printWriter.appendln("assignable!")
                     parsers.put(types.erasure(tp), AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
                         m.printMessage(L.WARNING, "Mapper for $tp has many default mappers! It was ${it.className}, now replaced by ${mapper.qualifiedName}.")
                     }
@@ -403,7 +363,6 @@ class Processor : AbstractProcessor() {
                 }
             }
             if (!found) {
-                printWriter.appendln("array?")
                 // generic arrays (primitive arrays should implement MappingAdapter<x[]>
                 if (types.isAssignable(mapperAsDeclaredType, defaultArrayParserType))
                     parsers[objectArrayType] =
@@ -413,7 +372,6 @@ class Processor : AbstractProcessor() {
                             AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()])
             }
             if (!found) {
-                printWriter.appendln("generics?")
                 // maybe it is generic mapper?
                 val methods = mapper.methods()
                 val toObject = ArrayList<ExecutableElement>(1)
@@ -426,14 +384,12 @@ class Processor : AbstractProcessor() {
                 // Tp parsers:
                 // <A, B, C> Tp<A, B, C> toObject(Input, Parser<A>, Parser<B>, Parser<C>)
                 for (method in methods) {
-                    printWriter.appendln("processing $method")
                     if (method.parameters.isEmpty()) continue
                     val parameters = method.parameters
                     if (method.typeParameters.isEmpty()) continue
                     val returnType = method.returnType
                     val typeParameters = method.typeParameters
                     val firstArgTp = parameters[0].asType()
-                    printWriter.appendln("params: $parameters, retTp: $returnType, tpArgs: $typeParameters, firstArgTp: $firstArgTp")
                     if (method.simpleName.toString() == "toObject"
                             && parameters.size > 1
                             && types.isAssignable(generator.inputTypeName, firstArgTp)
@@ -443,12 +399,10 @@ class Processor : AbstractProcessor() {
                             && run {
                                 var correct = true
                                 val retTpTA = returnType.typeArguments
-                                printWriter.appendln("toObject? retTp type args: $retTpTA")
                                 for (i in typeParameters.indices) {
                                     val retTpArg = retTpTA[i]
                                     val typeParameter = typeParameters[i].asType()
                                     val parserTp = parameters[i + 1].asType()
-                                    printWriter.appendln("$i: retTp tp arg: $retTpArg, tp arg: $typeParameter, parserTp: $parserTp")
                                     if (!(parserTp is DeclaredType
                                                     && types.isSameType(types.erasure(parserTp), types.erasure(defaultParserType))
                                                     && parserTp.typeArguments.size == 2
@@ -462,7 +416,6 @@ class Processor : AbstractProcessor() {
                                 correct
                             }) {
                         // actually, correct "toObject" signature
-                        printWriter.appendln("got 'toObject'!")
                         toObject.add(method)
                     }
                     if (method.simpleName.toString() == "write"
@@ -473,11 +426,9 @@ class Processor : AbstractProcessor() {
                             && parameters.size - 2 == typeParameters.size
                             && run {
                                 var correct = true
-                                printWriter.appendln("write?")
                                 for (i in typeParameters.indices) {
                                     val typeParameter = typeParameters[i].asType()
                                     val serializerTp = parameters[i + 2].asType()
-                                    printWriter.appendln("$i: tp arg: $typeParameter, serializerTp: $serializerTp")
                                     if (!(serializerTp is DeclaredType
                                                     && types.isSameType(types.erasure(serializerTp), types.erasure(defaultSerializerType))
                                                     && serializerTp.typeArguments.size == 2
@@ -490,7 +441,6 @@ class Processor : AbstractProcessor() {
                                 correct
                             }) {
                         // actually, correct "write" signature
-                        printWriter.appendln("got 'write'!")
                         write.add(method)
                     }
                     if (method.simpleName.toString() == "apply"
@@ -511,7 +461,6 @@ class Processor : AbstractProcessor() {
                                 }
                                 correct
                             }) {
-                        printWriter.appendln("got 'apply'!")
                         // actually, almost correct "apply" signature
                         val serErased = types.erasure(defaultSerializerType)
                         val parErased = types.erasure(defaultParserType)
@@ -528,7 +477,6 @@ class Processor : AbstractProcessor() {
                         }
                     }
                 }
-                printWriter.appendln("following methods found: \n\twrite: $write\n\ttoObj: $toObject\n\tapplyPar: $applyPar\n\tapplySer: $applySer")
                 for (app in applyPar) {
                     val erasure = types.erasure((app.returnType as DeclaredType).typeArguments[0])
                     for (toObj in toObject) {
@@ -553,12 +501,8 @@ class Processor : AbstractProcessor() {
                 }
 
             }
-            printWriter.appendln("found? $found")
-            printWriter.flush()
             if (!found) m.printMessage(L.ERROR, "${mapper.qualifiedName} annotated as DefaultMapper, but is not an MappingAdapter")
         }
-        printWriter.appendln("end of processing $mapper (annotated by $annotationName)");
-        printWriter.flush()
     }
 
     @Suppress("NOTHING_TO_INLINE")

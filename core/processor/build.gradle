@@ -5,7 +5,7 @@ plugins {
 }
 
 group 'com.gitlab.faerytea.mapper'
-version '0.1.16'
+version '0.1.17'
 
 repositories {
     mavenCentral()
@@ -46,8 +46,8 @@ bintray {
         vcsUrl = 'https://gitlab.com/faerytea/mapper.git'
         version {
             name = project.version
-            desc = 'Alpha release'
-            released = new Date(1580623678585L)
+            desc = 'Remove debug logger'
+            released = new Date(1581362952290L)
             vcsTag = 'alpha'
         }
     }

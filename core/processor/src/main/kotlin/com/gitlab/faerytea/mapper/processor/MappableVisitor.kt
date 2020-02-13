@@ -40,8 +40,6 @@ class MappableVisitor(
     override fun defaultAction(e: Element, p: HashMap<String, FieldDataBuilder>): HashMap<String, FieldDataBuilder> = p
 
     override fun visitExecutable(e: ExecutableElement, p: HashMap<String, FieldDataBuilder>): HashMap<String, FieldDataBuilder> = e.getAnnotation(Property::class.java)?.let {
-        processor.printWriter.appendln("Visiting e: $e, p is $p")
-        processor.printWriter.flush()
         val retType = e.returnType!!
         val name = it.value.ifEmpty { patchGetSet(e.simpleName) }
         val params: List<VariableElement> = e.parameters
@@ -77,15 +75,9 @@ class MappableVisitor(
     } ?: run {
         // check constructor & bulk setters
         if (e.simpleName.contentEquals("<init>")) {
-            processor.printWriter.appendln("found ctor")
-            processor.printWriter.flush()
             // ctr
             e.getAnnotation(Mappable::class.java)?.let { _ ->
-                processor.printWriter.appendln("with annotation")
-                processor.printWriter.flush()
                 val params = e.parameters
-                processor.printWriter.appendln("params $params")
-                processor.printWriter.flush()
                 data class Prop(
                         val name: String,
                         val type: TypeMirror,
@@ -103,14 +95,8 @@ class MappableVisitor(
                         Prop(this.value.ifEmpty { prop.simpleName.toString() }, propTp, default, checkRequired(prop), mapperFor(this, converterData?.from ?: propTp).first, converterData, validator(prop, processor.instances))
                     } ?: Prop(prop.simpleName.toString(), propTp, default, checkRequired(prop), parser(converterData?.from ?: propTp), converterData, validator(prop, processor.instances))
                 }
-                processor.printWriter.appendln("propData: $propData")
-                processor.printWriter.flush()
                 val propNames = propData.map { it.name }
-                processor.printWriter.appendln("propNames: $propNames")
-                processor.printWriter.flush()
                 val className = (e.enclosingElement as TypeElement).qualifiedName.toString()
-                processor.printWriter.appendln("class name: $className")
-                processor.printWriter.flush()
                 for (data in propData) {
                     val builder = p.getOrPut(data.name, { FieldDataBuilder(data.name, data.type, data.required, data.validator) })
                     builder.setters += Setter(
@@ -122,8 +108,6 @@ class MappableVisitor(
                             buildGenericsInfo(data.converter?.from ?: data.type, true, ::parser),
                             data.converter
                     )
-                    processor.printWriter.appendln("f ${data.name}: $builder")
-                    processor.printWriter.flush()
                 }
             }
             // no annotation -> ignore
@@ -165,19 +149,11 @@ class MappableVisitor(
     }
 
     override fun visitVariable(e: VariableElement, p: HashMap<String, FieldDataBuilder>): HashMap<String, FieldDataBuilder> = e.getAnnotation(Property::class.java)?.let {
-        processor.printWriter.appendln("Visiting v: $e, p is $p")
-        processor.printWriter.flush()
         val name = it.value.ifEmpty { e.simpleName }
-        processor.printWriter.appendln("name: $name")
-        processor.printWriter.flush()
         val tp = e.asType()
-        processor.printWriter.appendln("tp: $tp")
-        processor.printWriter.flush()
         val converterData = converter(e)
         val default = DefaultsVisitor.visit(e)
         val (parser, serializer) = mapperFor(it, converterData?.from ?: tp)
-        processor.printWriter.appendln("mappers: $parser, $serializer")
-        processor.printWriter.flush()
         for (mod in e.modifiers) when (mod) {
             Modifier.PRIVATE -> {
                 // cannot write
@@ -236,8 +212,6 @@ class MappableVisitor(
     }
 
     private fun mapperFor(property: Property, tp: TypeMirror) = property.safeUsing().toString().run {
-        processor.printWriter.appendln("mapper for $tp: using $this")
-        processor.printWriter.flush()
         if (equals(MappingAdapter::class.safeCanonicalName().toString())) {
             val parserName = property.safeUsingPar()
             val parser = if (Parser::class.safeCanonicalName().toString() == parserName.toString()) {
@@ -255,7 +229,7 @@ class MappableVisitor(
         } else {
             adapterInfo(this, property.usingNamed).let { it to it }
         }
-    }.also { processor.printWriter.flush() }
+    }
 
     private fun adapterInfo(adapterName: CharSequence, name: String) =
             AdapterInfo(adapterName, if (name.isNotEmpty()) processor.named[name].let {
