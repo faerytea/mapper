@@ -15,15 +15,5 @@
  */
 package com.gitlab.faerytea.mapper.adapters;
 
-import java.io.IOException;
-
-/**
- * Interface for transforming data to
- * serialized form
- *
- * @param <T>      class for programmers
- * @param <Output> consumer of data
- */
-public interface Serializer<T, Output> {
-    void write(T object, Output to) throws IOException;
+public interface MappingAdapterLong<Input, Output> extends SerializerLong<Output>, ParserLong<Input> {
 }

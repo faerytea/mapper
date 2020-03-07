@@ -15,10 +15,6 @@
  */
 package com.gitlab.faerytea.mapper.annotations;
 
-import com.gitlab.faerytea.mapper.adapters.MappingAdapter;
-import com.gitlab.faerytea.mapper.adapters.Parser;
-import com.gitlab.faerytea.mapper.adapters.Serializer;
-
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
@@ -54,52 +50,10 @@ public @interface Property {
     String value() default "";
 
     /**
-     * Specify {@link MappingAdapter} to use for mapping. By default uses adapter,
-     * annotated by {@link DefaultMapper}. Overrides {@link #serializeUsing()}
-     * and {@link #parseUsing()}.
+     * Use non-default mapper for type specified
+     * in {@link #value()}.
      *
-     * @return adapter
+     * @return description of mapper
      */
-    Class<?> using() default MappingAdapter.class;
-
-    /**
-     * Specify {@link Serializer} to use for mapping. By default uses adapter,
-     * annotated by {@link DefaultMapper}.
-     *
-     * @return adapter
-     */
-    Class<?> serializeUsing() default Serializer.class;
-
-    /**
-     * Specify {@link Parser} to use for mapping. By default uses adapter,
-     * annotated by {@link DefaultMapper}.
-     *
-     * @return adapter
-     */
-    Class<?> parseUsing() default Parser.class;
-
-    /**
-     * Specify {@link MappingAdapter} to use for mapping. By default uses adapter,
-     * annotated by {@link DefaultMapper}. Overrides {@link #serializeUsingNamed()}
-     * and {@link #parseUsingNamed()}.
-     *
-     * @return adapter
-     */
-    String usingNamed() default "";
-
-    /**
-     * Specify {@link Serializer} to use for mapping. By default uses adapter,
-     * annotated by {@link DefaultMapper}.
-     *
-     * @return adapter
-     */
-    String serializeUsingNamed() default "";
-
-    /**
-     * Specify {@link Parser} to use for mapping. By default uses adapter,
-     * annotated by {@link DefaultMapper}.
-     *
-     * @return adapter
-     */
-    String parseUsingNamed() default "";
+    SpecificMapper via() default @SpecificMapper;
 }

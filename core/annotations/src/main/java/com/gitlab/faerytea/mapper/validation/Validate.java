@@ -20,6 +20,10 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
+/**
+ * Validate value after parsing.
+ * Only one method should be used.
+ */
 @Retention(RetentionPolicy.SOURCE)
 @Target({ElementType.TYPE, ElementType.FIELD, ElementType.METHOD})
 public @interface Validate {
@@ -39,5 +43,11 @@ public @interface Validate {
      * @return java code
      */
     String value() default "";
+
+    /**
+     * Specify validator.
+     *
+     * @return validator
+     */
     Class<? extends Validator> validator() default Validator.class;
 }

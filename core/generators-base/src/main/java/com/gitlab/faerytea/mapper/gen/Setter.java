@@ -25,8 +25,6 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Collections;
 import java.util.List;
 
-import javax.lang.model.type.TypeMirror;
-
 /**
  * Description how to set value
  */
@@ -53,6 +51,8 @@ public final class Setter {
     public final List<@NotNull GenericTypeInfo> genericArguments;
     @Nullable
     public final ConverterData converter;
+    @Nullable
+    public final ConcreteTypeResolver typeResolver;
 
     public Setter(@NotNull List<@NotNull String> propertyNames,
                   @NotNull String setterName,
@@ -60,7 +60,8 @@ public final class Setter {
                   @NotNull AdapterInfo adapter,
                   @NotNull String defaultValue,
                   @NotNull List<@NotNull GenericTypeInfo> genericArguments,
-                  @Nullable ConverterData converter) {
+                  @Nullable ConverterData converter,
+                  @Nullable ConcreteTypeResolver typeResolver) {
         this.propertyNames = propertyNames;
         this.setterName = setterName;
         this.setterType = setterType;
@@ -68,32 +69,7 @@ public final class Setter {
         this.defaultValue = defaultValue;
         this.genericArguments = genericArguments;
         this.converter = converter;
-    }
-
-    public Setter(@NotNull List<@NotNull String> propertyNames,
-                  @NotNull String setterName,
-                  @NotNull Type setterType,
-                  @NotNull AdapterInfo adapter,
-                  @NotNull String defaultValue,
-                  @NotNull List<@NotNull GenericTypeInfo> genericArguments) {
-        this(propertyNames, setterName, setterType, adapter, defaultValue, genericArguments, null);
-    }
-
-    public Setter(@NotNull List<@NotNull String> propertyNames,
-                  @NotNull String setterName,
-                  @NotNull Type setterType,
-                  @NotNull AdapterInfo adapter,
-                  @NotNull String defaultValue,
-                  @Nullable ConverterData converter) {
-        this(propertyNames, setterName, setterType, adapter, defaultValue, Collections.emptyList(), converter);
-    }
-
-    public Setter(@NotNull List<@NotNull String> propertyNames,
-                  @NotNull String setterName,
-                  @NotNull Type setterType,
-                  @NotNull AdapterInfo adapter,
-                  @NotNull String defaultValue) {
-        this(propertyNames, setterName, setterType, adapter, defaultValue, Collections.emptyList(), null);
+        this.typeResolver = typeResolver;
     }
 
     public Setter(@NotNull String fieldName,
@@ -102,34 +78,9 @@ public final class Setter {
                   @NotNull AdapterInfo adapter,
                   @NotNull String defaultValue,
                   @NotNull List<@NotNull GenericTypeInfo> genericArguments,
-                  @Nullable ConverterData converter) {
-        this(Collections.singletonList(fieldName), setterName, setterType, adapter, defaultValue, genericArguments, converter);
-    }
-
-    public Setter(@NotNull String fieldName,
-                  @NotNull String setterName,
-                  @NotNull Type setterType,
-                  @NotNull AdapterInfo adapter,
-                  @NotNull String defaultValue,
-                  @NotNull List<@NotNull GenericTypeInfo> genericArguments) {
-        this(fieldName, setterName, setterType, adapter, defaultValue, genericArguments, null);
-    }
-
-    public Setter(@NotNull String fieldName,
-                  @NotNull String setterName,
-                  @NotNull Type setterType,
-                  @NotNull AdapterInfo adapter,
-                  @NotNull String defaultValue,
-                  @Nullable ConverterData converter) {
-        this(Collections.singletonList(fieldName), setterName, setterType, adapter, defaultValue, converter);
-    }
-
-    public Setter(@NotNull String fieldName,
-                  @NotNull String setterName,
-                  @NotNull Type setterType,
-                  @NotNull AdapterInfo adapter,
-                  @NotNull String defaultValue) {
-        this(fieldName, setterName, setterType, adapter, defaultValue, Collections.emptyList(), null);
+                  @Nullable ConverterData converter,
+                  @Nullable ConcreteTypeResolver typeResolver) {
+        this(Collections.singletonList(fieldName), setterName, setterType, adapter, defaultValue, genericArguments, converter, typeResolver);
     }
 
     @NotNull

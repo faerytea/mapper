@@ -29,7 +29,7 @@ public final class AdapterInfo {
      * Fully qualified adapter name
      */
     @NotNull
-    public final String  className;
+    public final String className;
     /**
      * Way to obtain instance of {@link #className}
      */

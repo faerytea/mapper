@@ -18,12 +18,17 @@ package com.gitlab.faerytea.mapper.adapters;
 import java.io.IOException;
 
 /**
- * Interface for transforming data to
- * serialized form
- *
- * @param <T>      class for programmers
- * @param <Output> consumer of data
+ * Adapter which always throws.
  */
-public interface Serializer<T, Output> {
-    void write(T object, Output to) throws IOException;
+@SuppressWarnings("rawtypes")
+public class ThrowingAdapter implements MappingAdapter {
+    @Override
+    public Object toObject(Object source) throws IOException {
+        throw new IllegalArgumentException("cannot extract anything from " + source);
+    }
+
+    @Override
+    public void write(Object object, Object to) throws IOException {
+        throw new IllegalArgumentException(object.getClass().getCanonicalName() + " cannot be serialized");
+    }
 }

@@ -26,7 +26,7 @@ You should plug it as annotation processor
 2. Add to dependency section
 ```groovy
     annotationProcessor 'your.found.fancy:processor:1.2.3'
-    annotationProcessor 'com.gitlab.faerytea.mapper:processor:0.1.16'
+    annotationProcessor 'com.gitlab.faerytea.mapper:processor:0.1.17'
 ```
 and everything needed to it (like `com.fasterxml.jackson.core:jackson-core`)
 3. Configure: 
@@ -39,8 +39,8 @@ compileJava.options.compilerArgs += '-AmapperGeneratorName=MyFancyProcessor'
 1. Create separate project.
 2. Add
 ```groovy
-    implementation 'com.gitlab.faerytea.mapper:generators-base:0.6.0'
-    implementation 'com.gitlab.faerytea.mapper:annotations:0.7'
+    implementation 'com.gitlab.faerytea.mapper:generators-base:0.7.0'
+    implementation 'com.gitlab.faerytea.mapper:annotations:0.9'
     implementation 'com.squareup:javapoet:1.11.1'
 ```
 Yes, there is Java Poet. It is nice and pretty simple.

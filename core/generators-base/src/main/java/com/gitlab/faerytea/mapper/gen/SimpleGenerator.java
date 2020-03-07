@@ -21,7 +21,8 @@ package com.gitlab.faerytea.mapper.gen;
 
 import org.jetbrains.annotations.NotNull;
 
-import java.util.Set;
+import java.util.Collection;
+import java.util.Collections;
 
 import javax.annotation.processing.Filer;
 import javax.annotation.processing.Messager;
@@ -72,6 +73,12 @@ public abstract class SimpleGenerator implements Generator {
     @Override
     public ReferenceType getOutputTypeName() {
         return outputType;
+    }
+
+    @NotNull
+    @Override
+    public Collection<@NotNull InstanceData> getInstances() {
+        return Collections.emptySet();
     }
 
     /**

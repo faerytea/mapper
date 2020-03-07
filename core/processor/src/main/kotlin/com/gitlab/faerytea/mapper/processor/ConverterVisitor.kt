@@ -53,6 +53,10 @@ object ConverterVisitor : SimpleElementVisitor8<ConverterData?, ProcessingEnviro
             LongConverter::class
     )
 
+    override fun visitTypeParameter(e: TypeParameterElement, p: ProcessingEnvironment): ConverterData? {
+        return extractConverter(e, e.asType(), p)
+    }
+
     override fun visitExecutable(e: ExecutableElement, p: ProcessingEnvironment): ConverterData? = when (e.parameters.size) {
         0 -> extractConverter(e, e.returnType, p) // getter
         1 -> extractConverter(e, e.parameters[0].asType(), p) // simple setter
@@ -63,7 +67,11 @@ object ConverterVisitor : SimpleElementVisitor8<ConverterData?, ProcessingEnviro
         return extractConverter(e, e.asType(), p)
     }
 
-    private fun extractConverter(e: Element, tp: TypeMirror, env: ProcessingEnvironment): ConverterData? = e.getAnnotation(Convert::class.java)?.let { annotation ->
+    private fun extractConverter(e: Element, tp: TypeMirror, env: ProcessingEnvironment): ConverterData? = e.getAnnotation(Convert::class.java)?.let {
+        buildConverterData(env, tp, e, it)
+    }
+
+    internal fun buildConverterData(env: ProcessingEnvironment, tp: TypeMirror, e: Element, annotation: Convert): ConverterData? {
         val elements = env.elementUtils
         val types = env.typeUtils
         val converterElement = elements.getTypeElement(try {
@@ -76,19 +84,19 @@ object ConverterVisitor : SimpleElementVisitor8<ConverterData?, ProcessingEnviro
         if (encDecConverters.any { types.isAssignable(converterType, types.erasure(elements.mirror(it))) }) {
             // encode / decode
             val methods = converterElement.methods()
-            println("all methods: $methods")
+            Log.note { "all methods: $methods" }
             // <type> <name>(<type> <param>)
             val rightSignature = methods.filter { it.parameters.printIt().size == 1 && (it.modifiers.printIt() intersect forbiddenModifiers).printIt().isEmpty() && it.returnType.kind.printIt() != TypeKind.VOID }
-            println("right signature: $rightSignature")
+            Log.note { "right signature: $rightSignature" }
             val encode = rightSignature.find { it.simpleName.toString().printIt() == "encode" }
             val decode = rightSignature.find { it.simpleName.toString().printIt() == "decode" }
-            println("enc: $encode; dec: $decode")
+            Log.note { "enc: $encode; dec: $decode" }
             if (encode == null || decode == null) {
                 env.messager.printMessage(Diagnostic.Kind.ERROR, "@Convert annotation provides converter which lacks encode / decode methods", e)
-                return@let null // not all necessary methods found
+                return null // not all necessary methods found
             }
             // check types
-            return@let findTypes(encode, decode, tp, e, env, annotation.reversed)?.let { (from, to) ->
+            return findTypes(encode, decode, tp, e, env, annotation.reversed)?.let { (from, to) ->
                 ConverterData(AdapterInfo(converterElement.qualifiedName.toString()), from, to)
             }
         }
@@ -100,39 +108,39 @@ object ConverterVisitor : SimpleElementVisitor8<ConverterData?, ProcessingEnviro
             val converterData = if (tp.kind.isPrimitive) {
                 // our type is primitive
                 val toNameMethods = rightSignature.filter { it.simpleName.toString() == ConverterData.nameByKind("to", tp.kind)!! }
-                println("right signature $rightSignature")
-                println("toNameMethods $toNameMethods")
+                Log.note { "right signature $rightSignature" }
+                Log.note { "toNameMethods $toNameMethods" }
                 if (toNameMethods.size == 1) {
                     val oppositeTp = toNameMethods[0].parameters[0].asType()
                     val reverseConversionName =
                             if (oppositeTp.kind.isPrimitive)
-                                // so we need "toOppositeTp" with tp as argument
+                            // so we need "toOppositeTp" with tp as argument
                                 ConverterData.nameByKind("to", oppositeTp.kind)!!
                             else
-                                // so we need "fromTp" with oppositeTp as ret type
+                            // so we need "fromTp" with oppositeTp as ret type
                                 ConverterData.nameByKind("from", tp.kind)!!
-                    println("reverse conversion name: $reverseConversionName")
+                    Log.note { "reverse conversion name: $reverseConversionName" }
                     ConverterData(AdapterInfo(converterElement.qualifiedName.toString()), oppositeTp, tp).takeIf {
                         (rightSignature.filter {
-                            println("filtering: $it: ${it.simpleName}, ${it.parameters}, our is $tp and we have equality ${it.parameters[0] == tp}")
-                            it.simpleName.toString() == reverseConversionName && it.parameters[0].asType() == tp
-                        }.also { println("filtered: $it") }.size == 1)
+                            Log.note { "filtering: $it: ${it.simpleName}, ${it.parameters[0].asType()}, our is $tp and we have equality ${types.isSameType(it.parameters[0].asType(), tp)}" }
+                            it.simpleName.toString() == reverseConversionName && types.isSameType(it.parameters[0].asType(), tp)
+                        }.also { Log.note { "filtered: $it" } }.size == 1)
                     }
                 } else {
                     null
                 }
             } else {
                 // opposite type is primitive, our is not
-                val tpCreators = rightSignature.filter { it.simpleName.startsWith("from") && it.returnType == tp }
+                val tpCreators = rightSignature.filter { it.simpleName.startsWith("from") && types.isSameType(tp, it.returnType) }
                 ConverterData(AdapterInfo(converterElement.qualifiedName.toString()), tpCreators[0].parameters[0].asType(), tp).takeIf {
                     tpCreators.size == 1
                 }
             }
-            if (converterData == null) {
+            return if (converterData == null) {
                 env.messager.printMessage(Diagnostic.Kind.ERROR, "@Convert annotation provides ambiguous or invalid converter", e)
-                return@let null
+                null
             } else {
-                return@let converterData
+                converterData
             }
         }
         env.messager.printMessage(
@@ -142,7 +150,7 @@ object ConverterVisitor : SimpleElementVisitor8<ConverterData?, ProcessingEnviro
                 Valid converters must implement one of ${(encDecConverters + toXConverters).map { it.java.simpleName }}
                 """.trimIndent(),
                 e)
-        null
+        return null
     }
 
     private fun findTypes(encode: ExecutableElement,
@@ -207,4 +215,4 @@ private fun TypeElement.allInterfaces(): MutableList<TypeMirror> {
 private fun Elements.mirror(cls: KClass<*>): TypeMirror? = getTypeElement(cls.java.name)?.asType()
 
 @Suppress("NOTHING_TO_INLINE")
-private inline fun <T> T.printIt(): T = this.also { println(it) }
+private inline fun <T> T.printIt(): T = this.also { Log.note { it } }

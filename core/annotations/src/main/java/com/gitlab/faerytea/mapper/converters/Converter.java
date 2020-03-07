@@ -23,6 +23,19 @@ package com.gitlab.faerytea.mapper.converters;
  * @param <To>   useful form (i.e. type in java)
  */
 public interface Converter<From, To> extends MarkerConverter {
+    /**
+     * Convert {@code value} to useful form
+     *
+     * @param value mappable form
+     * @return useful form
+     */
     To decode(From value);
+
+    /**
+     * Convert {@code value} to mappable form
+     *
+     * @param value useful form
+     * @return mappable form
+     */
     From encode(To value);
 }

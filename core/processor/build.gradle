@@ -5,17 +5,17 @@ plugins {
 }
 
 group 'com.gitlab.faerytea.mapper'
-version '0.1.17'
+version '0.1.18'
 
 repositories {
-    mavenCentral()
+    jcenter()
     mavenLocal()
 }
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8"
-    implementation 'com.gitlab.faerytea.mapper:annotations:0.8'
-    implementation 'com.gitlab.faerytea.mapper:generators-base:0.6.0'
+    implementation 'com.gitlab.faerytea.mapper:annotations:0.9'
+    implementation 'com.gitlab.faerytea.mapper:generators-base:0.7.0'
 }
 
 compileKotlin {
@@ -46,9 +46,8 @@ bintray {
         vcsUrl = 'https://gitlab.com/faerytea/mapper.git'
         version {
             name = project.version
-            desc = 'Remove debug logger'
-            released = new Date(1581362952290L)
-            vcsTag = 'alpha'
+            desc = 'Support for subtypes'
+            released = new Date(1583606708702L)
         }
     }
     publications = ['mapperProcessor']

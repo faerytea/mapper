@@ -6,18 +6,18 @@ plugins {
 }
 
 group 'com.gitlab.faerytea.mapper'
-version '0.6.0'
+version '0.7.0'
 
 sourceCompatibility = 1.8
 
 repositories {
-    mavenCentral()
+    jcenter()
     mavenLocal()
 }
 
 dependencies {
     implementation 'org.jetbrains:annotations:16.0.2'
-    api 'com.gitlab.faerytea.mapper:annotations:0.8'
+    api 'com.gitlab.faerytea.mapper:annotations:0.9'
     api 'com.squareup:javapoet:1.11.1'
 }
 
@@ -41,8 +41,8 @@ bintray {
         vcsUrl = 'https://gitlab.com/faerytea/mapper.git'
         version {
             name = project.version
-            desc = 'Alpha release'
-            released = new Date(1580623678585L)
+            desc = 'Beta release'
+            released = new Date(1583606708702L)
             vcsTag = 'alpha'
         }
     }

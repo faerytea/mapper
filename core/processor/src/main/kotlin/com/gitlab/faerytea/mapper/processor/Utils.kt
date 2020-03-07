@@ -19,7 +19,7 @@
  */
 package com.gitlab.faerytea.mapper.processor
 
-import com.gitlab.faerytea.mapper.annotations.Property
+import com.gitlab.faerytea.mapper.annotations.SpecificMapper
 import com.gitlab.faerytea.mapper.gen.InstanceData
 import com.gitlab.faerytea.mapper.gen.ValidatorInfo
 import com.gitlab.faerytea.mapper.validation.Validate
@@ -33,8 +33,8 @@ import javax.lang.model.type.DeclaredType
 import javax.lang.model.type.MirroredTypeException
 import javax.lang.model.type.TypeKind
 import javax.lang.model.util.ElementFilter
+import javax.lang.model.util.Elements
 import kotlin.reflect.KClass
-
 
 fun KClass<*>.safeCanonicalName(): CharSequence = try {
     this.java.canonicalName
@@ -42,7 +42,7 @@ fun KClass<*>.safeCanonicalName(): CharSequence = try {
     ((e.typeMirror as DeclaredType).asElement() as TypeElement).qualifiedName
 }
 
-fun Property.safeUsing(): CharSequence = try {
+fun SpecificMapper.safeUsing(): CharSequence = try {
     this.using.safeCanonicalName()
 } catch (e: MirroredTypeException) {
     ((e.typeMirror as DeclaredType).asElement() as TypeElement).qualifiedName
@@ -50,7 +50,7 @@ fun Property.safeUsing(): CharSequence = try {
     if (startsWith("<any?>.", true)) substring(7) else this
 }
 
-fun Property.safeUsingSer(): CharSequence = try {
+fun SpecificMapper.safeUsingSer(): CharSequence = try {
     this.serializeUsing.safeCanonicalName()
 } catch (e: MirroredTypeException) {
     ((e.typeMirror as DeclaredType).asElement() as TypeElement).qualifiedName
@@ -58,7 +58,7 @@ fun Property.safeUsingSer(): CharSequence = try {
     if (startsWith("<any?>.", true)) substring(7) else this
 }
 
-fun Property.safeUsingPar(): CharSequence = try {
+fun SpecificMapper.safeUsingPar(): CharSequence = try {
     this.parseUsing.safeCanonicalName()
 } catch (e: MirroredTypeException) {
     ((e.typeMirror as DeclaredType).asElement() as TypeElement).qualifiedName
@@ -77,6 +77,10 @@ fun TypeElement.methods(): List<ExecutableElement> {
     }
     return result
 }
+
+fun TypeElement.asDeclaredType(): DeclaredType = asType() as DeclaredType
+
+fun Elements.getTypeElement(clazz: KClass<*>): TypeElement = getTypeElement(clazz.safeCanonicalName())
 
 fun Throwable.stringTrace(): StringBuffer? = StringWriter().apply { this@stringTrace.printStackTrace(PrintWriter(this, true)) }.buffer
 

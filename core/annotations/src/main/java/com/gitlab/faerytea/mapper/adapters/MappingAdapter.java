@@ -15,5 +15,13 @@
  */
 package com.gitlab.faerytea.mapper.adapters;
 
+/**
+ * Interface for transforming data from and to
+ * serialized form
+ *
+ * @param <T>      class for programmers
+ * @param <Input>  provider of data
+ * @param <Output> consumer of data
+ */
 public interface MappingAdapter<T, Input, Output> extends Serializer<T, Output>, Parser<T, Input> {
 }

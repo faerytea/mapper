@@ -22,8 +22,7 @@ package com.gitlab.faerytea.mapper.processor
 import com.gitlab.faerytea.mapper.adapters.*
 import com.gitlab.faerytea.mapper.annotations.*
 import com.gitlab.faerytea.mapper.gen.*
-import java.io.File
-import java.io.PrintWriter
+import java.io.PrintStream
 import java.util.function.BiFunction
 import javax.annotation.processing.*
 import javax.lang.model.SourceVersion
@@ -37,7 +36,13 @@ import javax.tools.Diagnostic.Kind as L
 @SupportedAnnotationTypes(
         "com.gitlab.faerytea.mapper.annotations.*"
 )
-@SupportedOptions("mapperGeneratorName")
+@SupportedOptions(
+        "mapperGeneratorName",
+        "mapperDisable",
+        "mapperExternalMappers",
+        "mapperLogging",
+        "mapperAdditionalOptions"
+)
 @SupportedSourceVersion(SourceVersion.RELEASE_8)
 class Processor : AbstractProcessor() {
     internal val elements: Elements
@@ -49,15 +54,15 @@ class Processor : AbstractProcessor() {
     /**
      * Type -> adapter info for type
      */
-    internal val serializers = HashMap<TypeMirror, AdapterInfo>()
+    internal val serializers = HashMap<TypeInfo, AdapterInfo>()
     /**
      * Type -> adapter info for type
      */
-    internal val parsers = HashMap<TypeMirror, AdapterInfo>()
+    internal val parsers = HashMap<TypeInfo, AdapterInfo>()
     /**
      * Converter -> it's info
      */
-    private val converters = HashMap<TypeMirror, AdapterInfo>()
+    private val converters = HashMap<TypeInfo, AdapterInfo>()
     internal val env
         get() = processingEnv
     internal val instances = HashMap<String, InstanceData>()
@@ -74,29 +79,50 @@ class Processor : AbstractProcessor() {
     private lateinit var defaultSerializerTypePrim: Map<TypeMirror, PrimitiveType>
     private lateinit var defaultArrayParserType: DeclaredType
     private lateinit var defaultArraySerializerType: DeclaredType
+    private lateinit var stringType: DeclaredType
+    private lateinit var stringTypeInfo: TypeInfo
     internal lateinit var objectArrayType: ArrayType
 
     override fun init(processingEnvironment: ProcessingEnvironment) {
         super.init(processingEnvironment)
-        defaultParserType = elements.getTypeElement(Parser::class.safeCanonicalName()).asType() as DeclaredType
+        try {
+            Log.enabled = true
+            when (val logging = processingEnvironment.options["mapperLogging"]) {
+                null, "", "disable", "false" -> Log.enabled = false
+                "stdout" -> Log.destination = System.out
+                "stderr" -> Log.destination = System.err
+                else -> Log.destination = PrintStream(logging)
+            }
+            Log.note { "logging enabled into ${Log.destination}" }
+        } catch (e: Throwable) {
+            processingEnvironment.messager.printMessage(L.WARNING, "Logging disabled due to ${e.stringTrace()}")
+            Log.enabled = false
+        }
+        defaultParserType = elements.getTypeElement(Parser::class).asDeclaredType()
         defaultParserAction = ElementFilter.methodsIn(elements.getAllMembers(elements.getTypeElement(Parser::class.safeCanonicalName()))).last()
-        defaultSerializerType = elements.getTypeElement(Serializer::class.safeCanonicalName()).asType() as DeclaredType
+        defaultSerializerType = elements.getTypeElement(Serializer::class).asDeclaredType()
         defaultSerializerAction = ElementFilter.methodsIn(elements.getAllMembers(elements.getTypeElement(Serializer::class.safeCanonicalName()))).last()
-        defaultMapperType = elements.getTypeElement(MappingAdapter::class.safeCanonicalName()).asType() as DeclaredType
+        defaultMapperType = elements.getTypeElement(MappingAdapter::class).asDeclaredType()
         defaultParserTypePrim = elements.run {
             mapOf(
-                    getTypeElement(ParserInt::class.safeCanonicalName()).asType() to types.getPrimitiveType(TypeKind.INT),
-                    getTypeElement(ParserDouble::class.safeCanonicalName()).asType() to types.getPrimitiveType(TypeKind.DOUBLE)
+                    getTypeElement(ParserBoolean::class).asType() to types.getPrimitiveType(TypeKind.BOOLEAN),
+                    getTypeElement(ParserInt::class).asType() to types.getPrimitiveType(TypeKind.INT),
+                    getTypeElement(ParserLong::class).asType() to types.getPrimitiveType(TypeKind.LONG),
+                    getTypeElement(ParserDouble::class).asType() to types.getPrimitiveType(TypeKind.DOUBLE)
             )
         }
         defaultSerializerTypePrim = elements.run {
             mapOf(
-                    getTypeElement(SerializerInt::class.safeCanonicalName()).asType() to types.getPrimitiveType(TypeKind.INT),
-                    getTypeElement(SerializerDouble::class.safeCanonicalName()).asType() to types.getPrimitiveType(TypeKind.DOUBLE)
+                    getTypeElement(SerializerBoolean::class).asType() to types.getPrimitiveType(TypeKind.BOOLEAN),
+                    getTypeElement(SerializerInt::class).asType() to types.getPrimitiveType(TypeKind.INT),
+                    getTypeElement(SerializerLong::class).asType() to types.getPrimitiveType(TypeKind.LONG),
+                    getTypeElement(SerializerDouble::class).asType() to types.getPrimitiveType(TypeKind.DOUBLE)
             )
         }
-        defaultArrayParserType = elements.getTypeElement(ArrayParser::class.safeCanonicalName()).asType() as DeclaredType
-        defaultArraySerializerType = elements.getTypeElement(ArraySerializer::class.safeCanonicalName()).asType() as DeclaredType
+        defaultArrayParserType = elements.getTypeElement(ArrayParser::class).asDeclaredType()
+        defaultArraySerializerType = elements.getTypeElement(ArraySerializer::class).asDeclaredType()
+        stringType = elements.getTypeElement(java.lang.String::class).asDeclaredType()
+        stringTypeInfo = TypeInfo.from(stringType)
         objectArrayType = types.getArrayType(types.getDeclaredType(elements.getTypeElement("java.lang.Object")))
         val name = processingEnvironment.options["mapperGeneratorName"]
         val cls: Class<out Generator>? = try {
@@ -119,6 +145,55 @@ class Processor : AbstractProcessor() {
                 generator.writePrelude()
                 parsers += generator.defaultParsers
                 serializers += generator.defaultSerializers
+                val defaultsAnnotations = listOf(DefaultMapper::class.java, DefaultSerializer::class.java, DefaultParser::class.java)
+                processingEnvironment.options["mapperExternalMappers"]?.split(',')?.forEach { entry ->
+                    if (entry.isNotEmpty()) {
+                        val lst = entry.split(':')
+                        val externalMapperName = lst[0]
+                        try {
+                            val e = elements.getTypeElement(externalMapperName)!!
+                            val annotation = defaultsAnnotations.find { e.getAnnotation(it) != null }
+                            if (annotation == null) {
+                                m.printMessage(L.WARNING, "$externalMapperName should be marked with one of ${defaultsAnnotations.map { "@${it.simpleName}" }}")
+                            } else {
+                                handleDefaultMappers(annotation.name, e)
+                                if (lst.size >= 2) {
+                                    val inst = lst[1]
+                                    val lastDot = inst.lastIndexOf('.')
+                                    if (lastDot == -1) {
+                                        m.printMessage(L.WARNING, "Malformed instance '$inst'")
+                                    } else {
+                                        val holderName = inst.substring(0, lastDot)
+                                        val holder = elements.getTypeElement(holderName)
+                                        if (holder == null) {
+                                            m.printMessage(L.WARNING, "Cannot use instance '$inst' — enclosing class $holderName not found")
+                                        } else {
+                                            val isMethod = inst.endsWith("()")
+                                            val instName = if (isMethod) inst.substring(lastDot + 1, inst.length - 2)
+                                                           else inst.substring(lastDot + 1)
+                                            val found = holder.enclosedElements.find {
+                                                it.simpleName.toString() == instName
+                                                        && (when (it.kind) {
+                                                                ElementKind.FIELD, ElementKind.ENUM_CONSTANT -> !isMethod
+                                                                ElementKind.METHOD -> isMethod
+                                                                else -> false
+                                                            })
+                                                        && it.getAnnotation(Instance::class.java) != null
+                                            }
+                                            if (found == null) {
+                                                m.printMessage(L.WARNING, "Cannot find instance '$inst' in class ${holder.qualifiedName}")
+                                            } else {
+                                                handleInstance(found)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (e: Throwable) {
+                            m.printMessage(L.WARNING, "Cannot use $externalMapperName — class not found")
+                        }
+                    }
+                }
             } catch (e: Throwable) {
                 m.printMessage(L.ERROR, "Cannot create $cls: constructor of (ProcessingEnvironment) cannot be invoked;\n${e.stringTrace()}")
                 ready = false
@@ -152,11 +227,11 @@ class Processor : AbstractProcessor() {
                             handleInstance(e)
                         }
                     }
-                    Mappable::class.java.name -> shouldGenerate = true
+                    Mappable::class.java.name, MappableViaSubclasses::class.java.name -> shouldGenerate = true
                 }
             }
             // apply instances
-            val replacer = BiFunction<TypeMirror, AdapterInfo, AdapterInfo> { _, a ->
+            val replacer = BiFunction<TypeInfo, AdapterInfo, AdapterInfo> { _, a ->
                 if (a.instance == null) {
                     instances[a.className]?.let {
                         return@BiFunction AdapterInfo(a.className, it)
@@ -166,11 +241,14 @@ class Processor : AbstractProcessor() {
             }
             serializers.replaceAll(replacer)
             parsers.replaceAll(replacer)
+            if (roundEnv.errorRaised()) return false
             m.printMessage(L.NOTE, "start mappable with:\n\tserializers: $serializers\n\tparsers: $parsers")
 
-            return shouldGenerate then generate(ElementFilter.typesIn(roundEnv.getElementsAnnotatedWith(Mappable::class.java)))
+            return shouldGenerate then generate(
+                    ElementFilter.typesIn(roundEnv.getElementsAnnotatedWith(Mappable::class.java) + roundEnv.getElementsAnnotatedWith(MappableViaSubclasses::class.java)),
+                    roundEnv)
         } catch (e: Exception) {
-            m.printMessage(L.ERROR, "Processing aborted due to ${e.localizedMessage}\n${e.stringTrace()}");
+            m.printMessage(L.ERROR, "Processing aborted due to ${e.localizedMessage}\n${e.stringTrace()}")
             return false
         }
     }
@@ -211,7 +289,7 @@ class Processor : AbstractProcessor() {
             named[name] = instance
         } else {
             instances[adapterType.toString()] = instance
-            converters.computeIfPresent(adapterType) { k, v ->
+            converters.computeIfPresent(TypeInfo.from(adapterType)) { k, v ->
                 val oldInstance = v.instance
                 if (oldInstance != null && oldInstance != instance) {
                     m.printMessage(L.WARNING, "Instance for $k is already present (${oldInstance.javaAccessor()}), replacing by ${instance.javaAccessor()}")
@@ -221,7 +299,7 @@ class Processor : AbstractProcessor() {
         }
     }
 
-    private fun generate(mappables: Set<TypeElement>): Boolean {
+    private fun generate(mappables: Set<TypeElement>, roundEnv: RoundEnvironment): Boolean {
         val generated = HashSet<String>()
         val missed = HashMap<String, String>()
         var changed: Boolean
@@ -233,45 +311,80 @@ class Processor : AbstractProcessor() {
                 if (className in generated) continue
                 m.printMessage(L.OTHER, "got ${c.simpleName}")
                 try {
-                    val mappableAnnotation = c.getAnnotation(Mappable::class.java)!!
-                    val onUnknown = try {
-                        val handler = mappableAnnotation.onUnknown.java
-                        elements.getTypeElement(handler.canonicalName)
-                    } catch (e: MirroredTypeException) {
-                        types.asElement(e.typeMirror) as TypeElement
-                    }!!
-                    if (onUnknown.methods().find { e ->
-                                println(e)
-                                println(e.simpleName.toString() == "handle")
-                                println(e.parameters.size == 2)
-                                println(e.returnType.kind == TypeKind.VOID)
-                                println(types.isSameType(e.parameters[0].asType(), elements.getTypeElement("java.lang.String").asType()))
-                                println(types.isAssignable(generator.inputTypeName, e.parameters[1].asType()))
-                                e.simpleName.toString() == "handle"
-                                        && e.parameters.size == 2
-                                        && e.returnType.kind == TypeKind.VOID
-                                        && types.isSameType(e.parameters[0].asType(), elements.getTypeElement("java.lang.String").asType())
-                                        && types.isAssignable(generator.inputTypeName, e.parameters[1].asType())
-                            } == null) {
-                        m.printMessage(L.ERROR, "$onUnknown is not compatible", c)
-                        return false
+                    val mappableSubclassesAnnotation = c.getAnnotation(MappableViaSubclasses::class.java)
+                    val mappableAnnotation = c.getAnnotation(Mappable::class.java)
+                    if (mappableAnnotation != null && mappableSubclassesAnnotation != null) {
+                        m.printMessage(L.ERROR, "Both @Mappable & @MappableViaSubclasses found on ${c.simpleName}", c)
+                        continue
                     }
-                    val onUnknownInstance = mappableAnnotation.onUnknownNamed.toString().run {
-                        if (isEmpty()) instances[this] else named[this]
+                    val generateResult = if (mappableAnnotation != null) {
+                        val onUnknown = try {
+                            val handler = mappableAnnotation.onUnknown.java
+                            elements.getTypeElement(handler.canonicalName)
+                        } catch (e: MirroredTypeException) {
+                            types.asElement(e.typeMirror) as TypeElement
+                        }!!
+                        if (onUnknown.methods().find { e ->
+                                    Log.note { e }
+                                    Log.note { e.simpleName.toString() == "handle" }
+                                    Log.note { e.parameters.size == 2 }
+                                    Log.note { e.returnType.kind == TypeKind.VOID }
+                                    Log.note { types.isSameType(e.parameters[0].asType(), elements.getTypeElement("java.lang.String").asType()) }
+                                    Log.note { types.isAssignable(generator.inputTypeName, e.parameters[1].asType()) }
+                                    e.simpleName.toString() == "handle"
+                                            && e.parameters.size == 2
+                                            && e.returnType.kind == TypeKind.VOID
+                                            && types.isSameType(e.parameters[0].asType(), elements.getTypeElement("java.lang.String").asType())
+                                            && types.isAssignable(generator.inputTypeName, e.parameters[1].asType())
+                                } == null) {
+                            m.printMessage(L.ERROR, "$onUnknown is not compatible", c)
+                            return false
+                        }
+                        val onUnknownInstance = mappableAnnotation.onUnknownNamed.run {
+                            if (isEmpty()) instances[this] else named[this]
+                        }
+                        val onUnknownAdapterInfo = AdapterInfo(onUnknown.qualifiedName.toString(), onUnknownInstance)
+                        if (c.kind == ElementKind.ENUM) {
+                            val stringParser = parsers[stringTypeInfo]
+                            val stringSerializer = serializers[stringTypeInfo]
+                            if (stringParser == null || stringSerializer == null)
+                                throw TypeNotFoundException(stringType)
+                            val constants = c.enclosedElements
+                                    .filter { it.kind == ElementKind.ENUM_CONSTANT }
+                                    .associate { field ->
+                                        val name = field.getAnnotation(Property::class.java)?.value
+                                        val fieldName = field.simpleName.toString()
+                                        val actualName = if (name.isNullOrEmpty()) fieldName else name
+                                        actualName to fieldName
+                                    }
+                            generator.generateFor(c, constants, onUnknownAdapterInfo, stringParser, stringSerializer)
+                        } else {
+                            val mappings = c.accept(elementVisitor, HashMap())
+                                    .mapValues { (_, v) -> FieldData(v.name, v.tp, v.getters, v.setters, v.required, v.validator) }
+                            if (roundEnv.errorRaised()) return false
+                            generator.generateFor(c, mappings, onUnknownAdapterInfo, validator(c, instances))
+                        }
+                    } else {
+                        assert(mappableSubclassesAnnotation != null)
+                        generator.generateFor(
+                                c,
+                                elementVisitor.run { mappableSubclassesAnnotation.value.concreteTypeResolver(c.asType(), c) },
+                                mappableSubclassesAnnotation.markAsDefault,
+                                null
+                        )
                     }
-                    val mappings = c.accept(elementVisitor, HashMap())
-                            .mapValues { (_, v) -> FieldData(v.name, v.tp, v.getters, v.setters, v.required, v.validator) }
-                    val generateResult = generator.generateFor(c, mappings, AdapterInfo(onUnknown.qualifiedName.toString(), onUnknownInstance), validator(c, instances))
                     if (generateResult.canParse)
-                        parsers[types.erasure(cAsType)] = generateResult.adapter
+                        parsers[TypeInfo.from(types.erasure(cAsType))] = generateResult.adapter
                     if (generateResult.canSerialize)
-                        serializers[types.erasure(cAsType)] = generateResult.adapter
+                        serializers[TypeInfo.from(types.erasure(cAsType))] = generateResult.adapter
                     generated.add(className)
                     changed = true
                     m.printMessage(L.OTHER, "$generateResult was generated for $className")
                 } catch (e: TypeNotFoundException) {
-                    missed[className] = e.key.toString()
-                    m.printMessage(L.OTHER, "$className is missing for ${e.key}")
+                    val tp = e.key
+
+                    missed[className] = tp.toString()
+                    m.printMessage(L.OTHER, "$className is missing for $tp")
                 } catch (e: Exception) {
                     m.printMessage(L.ERROR, "Generator $generator failed to generate adapter for ${c.qualifiedName}: ${e.stringTrace()}", c)
                 }
@@ -304,12 +417,12 @@ class Processor : AbstractProcessor() {
                                     val type = types.erasure(typeElement.asType())
                                     val generateResult = generator.nameFor(typeElement)
                                     if (generateResult.canParse)
-                                        parsers[type] = generateResult.adapter
+                                        parsers[TypeInfo.from(type)] = generateResult.adapter
                                     if (generateResult.canSerialize)
-                                        serializers[type] = generateResult.adapter
+                                        serializers[TypeInfo.from(type)] = generateResult.adapter
                                     m.printMessage(L.OTHER, "fake $generateResult generated for $name")
                                 }
-                                generator.notifyCircularDependency(circle.map { elements.getTypeElement(it) });
+                                generator.notifyCircularDependency(circle.map { elements.getTypeElement(it) })
                                 pool.removeAll(circle)
                                 circle.clear()
                             }
@@ -334,13 +447,13 @@ class Processor : AbstractProcessor() {
         if (isObjectParser || isObjectSerializer) {
             if (isParser && isObjectParser) {
                 val actuallyAType = (types.asMemberOf(mapperAsDeclaredType, defaultParserAction) as ExecutableType).returnType
-                parsers.put(types.erasure(actuallyAType), AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
+                parsers.put(TypeInfo.from(types.erasure(actuallyAType)), AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
                     m.printMessage(L.WARNING, "Mapper for $actuallyAType has many default mappers! It was $it, now replaced by ${mapper.qualifiedName}.")
                 }
             }
             if (isSerializer && isObjectSerializer) {
                 val actuallyAType = (types.asMemberOf(mapperAsDeclaredType, defaultSerializerAction) as ExecutableType).parameterTypes[0]
-                serializers.put(types.erasure(actuallyAType), AdapterInfo(mapper.qualifiedName))?.let {
+                serializers.put(TypeInfo.from(types.erasure(actuallyAType)), AdapterInfo(mapper.qualifiedName))?.let {
                     m.printMessage(L.WARNING, "Mapper for $actuallyAType has many default mappers! It was ${it.className}, now replaced by ${mapper.qualifiedName}.")
                 }
             }
@@ -348,7 +461,7 @@ class Processor : AbstractProcessor() {
             var found = false
             for ((i, tp) in defaultSerializerTypePrim) {
                 if (types.isAssignable(mapperAsDeclaredType, types.erasure(i))) {
-                    serializers.put(types.erasure(tp), AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
+                    serializers.put(TypeInfo.from(types.erasure(tp)), AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
                         m.printMessage(L.WARNING, "Mapper for $tp has many default mappers! It was ${it.className}, now replaced by ${mapper.qualifiedName}.")
                     }
                     found = true
@@ -356,7 +469,7 @@ class Processor : AbstractProcessor() {
             }
             for ((i, tp) in defaultParserTypePrim) {
                 if (types.isAssignable(mapperAsDeclaredType, types.erasure(i))) {
-                    parsers.put(types.erasure(tp), AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
+                    parsers.put(TypeInfo.from(types.erasure(tp)), AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
                         m.printMessage(L.WARNING, "Mapper for $tp has many default mappers! It was ${it.className}, now replaced by ${mapper.qualifiedName}.")
                     }
                     found = true
@@ -365,10 +478,10 @@ class Processor : AbstractProcessor() {
             if (!found) {
                 // generic arrays (primitive arrays should implement MappingAdapter<x[]>
                 if (types.isAssignable(mapperAsDeclaredType, defaultArrayParserType))
-                    parsers[objectArrayType] =
+                    parsers[TypeInfo.from(objectArrayType)] =
                             AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()])
                 if (types.isAssignable(mapperAsDeclaredType, defaultArraySerializerType))
-                    serializers[objectArrayType] =
+                    serializers[TypeInfo.from(objectArrayType)] =
                             AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()])
             }
             if (!found) {
@@ -394,11 +507,11 @@ class Processor : AbstractProcessor() {
                             && parameters.size > 1
                             && types.isAssignable(generator.inputTypeName, firstArgTp)
                             && returnType is DeclaredType
-                            && returnType.typeArguments.count { it is TypeVariable } == parameters.size - 1
+                            && returnType.typeArguments.count { it.kind == TypeKind.TYPEVAR } == parameters.size - 1
                             && parameters.size - 1 == typeParameters.size
                             && run {
                                 var correct = true
-                                val retTpTA = returnType.typeArguments
+                                val retTpTA = returnType.typeArguments.filter { it.kind == TypeKind.TYPEVAR }
                                 for (i in typeParameters.indices) {
                                     val retTpArg = retTpTA[i]
                                     val typeParameter = typeParameters[i].asType()
@@ -432,8 +545,8 @@ class Processor : AbstractProcessor() {
                                     if (!(serializerTp is DeclaredType
                                                     && types.isSameType(types.erasure(serializerTp), types.erasure(defaultSerializerType))
                                                     && serializerTp.typeArguments.size == 2
-                                                    && serializerTp.typeArguments[0] == typeParameter
-                                                    && serializerTp.typeArguments[1] == outputTp)) {
+                                                    && types.isSameType(serializerTp.typeArguments[0], typeParameter)
+                                                    && types.isSameType(serializerTp.typeArguments[1], outputTp))) {
                                         correct = false
                                         break
                                     }
@@ -479,9 +592,10 @@ class Processor : AbstractProcessor() {
                 }
                 for (app in applyPar) {
                     val erasure = types.erasure((app.returnType as DeclaredType).typeArguments[0])
+                    val erasedTypeInfo = TypeInfo.from(erasure)
                     for (toObj in toObject) {
                         if (types.isSameType(types.erasure(toObj.returnType), erasure)) {
-                            parsers.put(erasure, AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
+                            parsers.put(erasedTypeInfo, AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
                                 m.printMessage(L.WARNING, "Mapper for $erasure has many default mappers! It was $it, now replaced by ${mapper.qualifiedName}.")
                             }
                             found = true
@@ -490,9 +604,10 @@ class Processor : AbstractProcessor() {
                 }
                 for (app in applySer) {
                     val erasure = types.erasure((app.returnType as DeclaredType).typeArguments[0])
+                    val erasedTypeInfo = TypeInfo.from(erasure)
                     for (w in write) {
                         if (types.isSameType(types.erasure(w.parameters[0].asType() as DeclaredType), erasure)) {
-                            serializers.put(erasure, AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
+                            serializers.put(erasedTypeInfo, AdapterInfo(mapper.qualifiedName, instances[mapper.qualifiedName.toString()]))?.let {
                                 m.printMessage(L.WARNING, "Mapper for $erasure has many default mappers! It was $it, now replaced by ${mapper.qualifiedName}.")
                             }
                             found = true

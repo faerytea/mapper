@@ -27,6 +27,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -35,7 +36,6 @@ import javax.annotation.processing.Filer;
 import javax.annotation.processing.ProcessingEnvironment;
 import javax.lang.model.element.TypeElement;
 import javax.lang.model.type.ReferenceType;
-import javax.lang.model.type.TypeMirror;
 
 /**
  * Interface for generating type-specific mappers.
@@ -45,7 +45,7 @@ import javax.lang.model.type.TypeMirror;
 public interface Generator {
     /**
      * Generate {@link MappingAdapter} for {@code targetType};
-     * fields can be found by its serialized names in {@code field}.
+     * fields can be found by its serialized names in {@code fields}.
      * Generated class must implement (directly or indirectly)
      * interface from {@link com.gitlab.faerytea.mapper.adapters}
      * package. Note that you can get primitives as target type.
@@ -63,6 +63,55 @@ public interface Generator {
             @NotNull TypeElement targetType,
             @NotNull Map<@NotNull String, @NotNull FieldData> fields,
             @NotNull AdapterInfo onUnknown,
+            @Nullable ValidatorInfo validator
+    ) throws GeneratingException, IOException;
+
+    /**
+     * Generate {@link MappingAdapter} for enum {@code targetType};
+     * constants can be found by its serialized names in {@code constants}.
+     * Generated class must implement (directly or indirectly)
+     * interface from {@link com.gitlab.faerytea.mapper.adapters}
+     * package.
+     *
+     * @param targetType       type for adapter
+     * @param constants        mapping from possible serialized constants to actual
+     *                         enum constants
+     * @param onUnknown        unknown constant handler
+     * @param stringParser     parser for strings
+     * @param stringSerializer serializer for strings
+     * @return fully qualified class name and its capabilities
+     * @throws GeneratingException when parser / serializer / mapper cannot be generated
+     * @throws IOException         when I/O error occurs (see {@link Filer})
+     */
+    @NotNull
+    GeneratedResultInfo generateFor(
+            @NotNull TypeElement targetType,
+            @NotNull Map<@NotNull String, @NotNull String> constants,
+            @NotNull AdapterInfo onUnknown,
+            @NotNull AdapterInfo stringParser,
+            @NotNull AdapterInfo stringSerializer
+    ) throws GeneratingException, IOException;
+
+    /**
+     * Generate {@link MappingAdapter} for {@code targetType}
+     * which delegates all work to adapters for subtypes.
+     * Generated class must implement (directly or indirectly)
+     * interface from {@link com.gitlab.faerytea.mapper.adapters}
+     * package.
+     *
+     * @param targetType    type for adapter
+     * @param resolver      info about subtypes
+     * @param markAsDefault mark generated mapper as default mapper
+     * @param validator     class validator
+     * @return fully qualified class name and its capabilities
+     * @throws GeneratingException when parser / serializer / mapper cannot be generated
+     * @throws IOException         when I/O error occurs (see {@link Filer})
+     */
+    @NotNull
+    GeneratedResultInfo generateFor(
+            @NotNull TypeElement targetType,
+            @NotNull ConcreteTypeResolver resolver,
+            boolean markAsDefault,
             @Nullable ValidatorInfo validator
     ) throws GeneratingException, IOException;
 
@@ -105,7 +154,7 @@ public interface Generator {
      * @return mapping from types to parsers
      */
     @NotNull
-    Map<@NotNull TypeMirror, @NotNull AdapterInfo> getDefaultParsers();
+    Map<@NotNull TypeInfo, @NotNull AdapterInfo> getDefaultParsers();
 
     /**
      * Returns default serializers for this generator.
@@ -115,8 +164,16 @@ public interface Generator {
      *
      * @return mapping from types to serializers
      */
+    @NotNull
+    Map<@NotNull TypeInfo, @NotNull AdapterInfo> getDefaultSerializers();
 
-    Map<@NotNull TypeMirror, @NotNull AdapterInfo> getDefaultSerializers();
+    /**
+     * Returns instances of classes from library
+     *
+     * @return collection of instances
+     */
+    @NotNull
+    Collection<@NotNull InstanceData> getInstances();
 
     /**
      * Will be called by processor to notify that {@code cycle} classes

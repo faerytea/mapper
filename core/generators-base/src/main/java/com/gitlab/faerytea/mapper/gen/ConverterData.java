@@ -28,8 +28,14 @@ import javax.lang.model.type.TypeMirror;
 public final class ConverterData {
     @NotNull
     public final AdapterInfo converter;
+    /**
+     * Understandable form (i.e. mappable)
+     */
     @NotNull
     public final TypeMirror from;
+    /**
+     * Useful form (i.e. type in POJO)
+     */
     @NotNull
     public final TypeMirror to;
 

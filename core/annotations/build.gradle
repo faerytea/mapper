@@ -6,12 +6,10 @@ plugins {
 }
 
 group 'com.gitlab.faerytea.mapper'
-version '0.8'
+version '0.9'
 
-sourceCompatibility = 1.6
-
-repositories {
-    mavenCentral()
+compileJava {
+    sourceCompatibility = 1.6
 }
 
 dependencies {
@@ -30,18 +28,15 @@ task javadocJar(type: Jar) {
 bintray {
     user = rootProject.bintrayUsername
     key = rootProject.bintrayKey
-    println "${bintray.user} # ${bintray.key}"
     pkg {
         repo = 'jars'
         name = project.name
-        println project.name
         licenses = [ 'Apache-2.0' ]
         vcsUrl = 'https://gitlab.com/faerytea/mapper.git'
         version {
             name = project.version
-            desc = 'Alpha release'
-            released = new Date(1580623678585L)
-            vcsTag = 'alpha'
+            desc = 'Add polymorphism & boolean adapter'
+            released = new Date(1583606708702L)
         }
     }
     publications = ['mapperAnnotations']
@@ -50,6 +45,12 @@ bintray {
 publishing {
     publications {
         mapperAnnotations(MavenPublication) {
+            from components.java
+
+            artifact sourcesJar
+            artifact javadocJar
+        }
+        mapperAnnotationsJ8(MavenPublication) {
             from components.java
 
             artifact sourcesJar

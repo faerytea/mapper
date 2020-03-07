@@ -20,36 +20,64 @@
 package com.gitlab.faerytea.mapper.gen;
 
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
 import java.util.Objects;
 
 import javax.lang.model.type.TypeMirror;
 
-public class GenericTypeInfo {
+public final class GenericTypeInfo {
     @NotNull
-    public final TypeMirror type;
-    @NotNull
-    public final AdapterInfo adapter;
+    public final SpecifiedMapper mapper;
     @NotNull
     public final List<GenericTypeInfo> nestedGeneric;
     @NotNull
-    public final AdapterType adapterType;
+    public final SpecifiedMapper.AdapterType adapterType;
+    @Nullable
+    public final ConverterData converter;
+    @Nullable
+    public final ConcreteTypeResolver typeResolver;
 
-    public GenericTypeInfo(@NotNull TypeMirror type, @NotNull AdapterInfo adapter, @NotNull List<GenericTypeInfo> nestedGeneric, @NotNull AdapterType adapterType) {
-        this.type = type;
-        this.adapter = adapter;
+    public GenericTypeInfo(@NotNull TypeMirror type,
+                           @NotNull AdapterInfo mapper,
+                           @NotNull List<GenericTypeInfo> nestedGeneric,
+                           @Nullable ConverterData converter) {
+        this.mapper = new SpecifiedMapper(type, mapper, mapper);
         this.nestedGeneric = nestedGeneric;
-        this.adapterType = adapterType;
+        this.adapterType = SpecifiedMapper.AdapterType.MAPPER;
+        this.converter = converter;
+        this.typeResolver = null;
     }
 
-    @Override
-    public String toString() {
-        return "GenericTypeInfo{" +
-                "type=" + type +
-                ", adapter=" + adapter +
-                ", nestedGeneric=" + nestedGeneric +
-                '}';
+    public GenericTypeInfo(@NotNull TypeMirror type,
+                           @Nullable AdapterInfo parser,
+                           @Nullable AdapterInfo serializer,
+                           @NotNull List<GenericTypeInfo> nestedGeneric,
+                           @Nullable ConverterData converter) {
+        this.mapper = new SpecifiedMapper(type, parser, serializer);
+        this.nestedGeneric = nestedGeneric;
+        this.adapterType = mapper.adapterType();
+        this.converter = converter;
+        this.typeResolver = null;
+    }
+
+    public GenericTypeInfo(@NotNull TypeMirror type,
+                           @NotNull List<GenericTypeInfo> nestedGeneric,
+                           @Nullable ConverterData converter,
+                           @NotNull ConcreteTypeResolver typeResolver) {
+        this.mapper = new SpecifiedMapper(type, null, null);
+        this.nestedGeneric = nestedGeneric;
+        this.adapterType = typeResolver.subtypes.values().stream()
+                .map(SpecifiedMapper::adapterType)
+                .reduce(SpecifiedMapper.AdapterType.MAPPER, (l, r) -> {
+                    if (l == r) return l;
+                    if (l == SpecifiedMapper.AdapterType.MAPPER) return r;
+                    if (r == SpecifiedMapper.AdapterType.MAPPER) return l;
+                    throw new IllegalArgumentException("Unsolvable constraints: " + typeResolver.subtypes);
+                });
+        this.converter = converter;
+        this.typeResolver = typeResolver;
     }
 
     @Override
@@ -57,17 +85,26 @@ public class GenericTypeInfo {
         if (this == o) return true;
         if (o == null || getClass() != o.getClass()) return false;
         GenericTypeInfo that = (GenericTypeInfo) o;
-        return type.equals(that.type) &&
-                adapter.equals(that.adapter) &&
-                nestedGeneric.equals(that.nestedGeneric);
+        return mapper.equals(that.mapper) &&
+                nestedGeneric.equals(that.nestedGeneric) &&
+                adapterType == that.adapterType &&
+                Objects.equals(converter, that.converter) &&
+                Objects.equals(typeResolver, that.typeResolver);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(type, adapter, nestedGeneric);
+        return Objects.hash(mapper, nestedGeneric, adapterType, converter, typeResolver);
     }
 
-    public enum AdapterType {
-        PARSER, SERIALIZER, MAPPER
+    @Override
+    public String toString() {
+        return "GenericTypeInfo{" +
+                "mapper=" + mapper +
+                ", nestedGeneric=" + nestedGeneric +
+                ", adapterType=" + adapterType +
+                ", converter=" + converter +
+                ", typeResolver=" + typeResolver +
+                '}';
     }
 }

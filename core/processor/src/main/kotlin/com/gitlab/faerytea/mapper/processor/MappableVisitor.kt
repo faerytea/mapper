@@ -22,20 +22,23 @@ package com.gitlab.faerytea.mapper.processor
 import com.gitlab.faerytea.mapper.adapters.MappingAdapter
 import com.gitlab.faerytea.mapper.adapters.Parser
 import com.gitlab.faerytea.mapper.adapters.Serializer
-import com.gitlab.faerytea.mapper.annotations.Mappable
-import com.gitlab.faerytea.mapper.annotations.Property
-import com.gitlab.faerytea.mapper.annotations.Required
+import com.gitlab.faerytea.mapper.annotations.*
 import com.gitlab.faerytea.mapper.converters.Convert
 import com.gitlab.faerytea.mapper.gen.*
+import com.gitlab.faerytea.mapper.polymorph.SubtypeResolver
+import java.util.*
 import javax.lang.model.element.*
 import javax.lang.model.type.*
 import javax.lang.model.util.SimpleElementVisitor8
 import javax.tools.Diagnostic
+import kotlin.collections.HashMap
 
 class MappableVisitor(
         private val processor: Processor
 ) : SimpleElementVisitor8<HashMap<String, FieldDataBuilder>, HashMap<String, FieldDataBuilder>>() {
-    inline operator fun <V> HashMap<TypeMirror, V>.get(key: TypeMirror, error: (TypeMirror) -> Exception): V = this[key] ?: throw error(key)
+    private val kindOfType = EnumSet.of(ElementKind.CLASS, ElementKind.ENUM, ElementKind.ANNOTATION_TYPE, ElementKind.INTERFACE)
+
+    inline operator fun <V> HashMap<TypeInfo, V>.get(key: TypeInfo, error: (TypeMirror) -> Exception): V = this[key] ?: throw error(key.builtBy)
 
     override fun defaultAction(e: Element, p: HashMap<String, FieldDataBuilder>): HashMap<String, FieldDataBuilder> = p
 
@@ -51,10 +54,11 @@ class MappableVisitor(
                     builder.name,
                     e.simpleName.toString(),
                     true,
-                    mapperFor(it, converterData?.from ?: builder.tp).second,
+                    mapperFor(it.via, converterData?.from ?: builder.tp).second,
                     DefaultsVisitor.visit(e),
-                    buildGenericsInfo(converterData?.from ?: builder.tp, false, ::serializer),
-                    converterData
+                    buildGenericsInfo(converterData?.from ?: builder.tp, e.getAnnotation(PutOnTypeArguments::class.java)?.value, e),
+                    converterData,
+                    checkSubtypes(retType, e)
             ))
         } else if (params.size == 1) {
             // simple setter
@@ -66,10 +70,11 @@ class MappableVisitor(
                     builder.name,
                     e.simpleName.toString(),
                     Setter.Type.CLASSIC,
-                    mapperFor(it, converterData?.from ?: builder.tp).first,
+                    mapperFor(it.via, converterData?.from ?: builder.tp).first,
                     DefaultsVisitor.visit(e),
-                    buildGenericsInfo(converterData?.from ?: builder.tp, true, ::parser),
-                    converterData))
+                    buildGenericsInfo(converterData?.from ?: builder.tp, e.getAnnotation(PutOnTypeArguments::class.java)?.value, e),
+                    converterData,
+                    checkSubtypes(argType, e)))
         }
         p
     } ?: run {
@@ -78,22 +83,44 @@ class MappableVisitor(
             // ctr
             e.getAnnotation(Mappable::class.java)?.let { _ ->
                 val params = e.parameters
-                data class Prop(
+                class Prop(
                         val name: String,
                         val type: TypeMirror,
                         val default: String,
                         val required: Boolean,
                         val parser: AdapterInfo,
                         val converter: ConverterData?,
-                        val validator: ValidatorInfo?
+                        val validator: ValidatorInfo?,
+                        val typeResolver: ConcreteTypeResolver?,
+                        val onArgs: Array<PutOnTypeArguments.OnArg>?
                 )
                 val propData = params.map { prop ->
                     val converterData = converter(prop)
                     val default = DefaultsVisitor.visit(prop)
                     val propTp = prop.asType()
                     prop.getAnnotation(Property::class.java)?.run {
-                        Prop(this.value.ifEmpty { prop.simpleName.toString() }, propTp, default, checkRequired(prop), mapperFor(this, converterData?.from ?: propTp).first, converterData, validator(prop, processor.instances))
-                    } ?: Prop(prop.simpleName.toString(), propTp, default, checkRequired(prop), parser(converterData?.from ?: propTp), converterData, validator(prop, processor.instances))
+                        Prop(
+                                this.value.ifEmpty { prop.simpleName.toString() },
+                                propTp,
+                                default,
+                                checkRequired(prop),
+                                mapperFor(via, converterData?.from ?: propTp).first,
+                                converterData,
+                                validator(prop, processor.instances),
+                                checkSubtypes(propTp, prop),
+                                prop.getAnnotation(PutOnTypeArguments::class.java)?.value
+                        )
+                    } ?: Prop(
+                            prop.simpleName.toString(),
+                            propTp,
+                            default,
+                            checkRequired(prop),
+                            parser(converterData?.from ?: propTp),
+                            converterData,
+                            validator(prop, processor.instances),
+                            checkSubtypes(propTp, prop),
+                            prop.getAnnotation(PutOnTypeArguments::class.java)?.value
+                    )
                 }
                 val propNames = propData.map { it.name }
                 val className = (e.enclosingElement as TypeElement).qualifiedName.toString()
@@ -105,8 +132,9 @@ class MappableVisitor(
                             Setter.Type.CONSTRUCTOR,
                             data.parser,
                             data.default,
-                            buildGenericsInfo(data.converter?.from ?: data.type, true, ::parser),
-                            data.converter
+                            buildGenericsInfo(data.converter?.from ?: data.type, data.onArgs, e),
+                            data.converter,
+                            data.typeResolver
                     )
                 }
             }
@@ -128,17 +156,19 @@ class MappableVisitor(
                 val namesList = names.asList()
                 for (i in params.indices) {
                     val name = names[i]
-                    val tp = params[i].asType()
-                    val builder = p.getOrPut(name, { FieldDataBuilder(name, tp, checkRequired(params[i]), validator(params[i], processor.instances)) })
+                    val param = params[i]
+                    val tp = param.asType()
+                    val builder = p.getOrPut(name, { FieldDataBuilder(name, tp, checkRequired(param), validator(param, processor.instances)) })
                     val converter = converters[i]
                     builder.setters += Setter(
                             namesList,
                             setterName,
                             Setter.Type.BULK,
-                            mapperFor(annotations[i], converter?.from ?: tp).first,
+                            mapperFor(annotations[i].via, converter?.from ?: tp).first,
                             defaults[i],
-                            buildGenericsInfo(converter?.from ?: tp, true, ::parser),
-                            converter
+                            buildGenericsInfo(converter?.from ?: tp, param.getAnnotation(PutOnTypeArguments::class.java)?.value, param),
+                            converter,
+                            checkSubtypes(tp, param)
                     )
                 }
             } else if (annotations.any { it != null }) {
@@ -153,7 +183,9 @@ class MappableVisitor(
         val tp = e.asType()
         val converterData = converter(e)
         val default = DefaultsVisitor.visit(e)
-        val (parser, serializer) = mapperFor(it, converterData?.from ?: tp)
+        val (parser, serializer) = mapperFor(it.via, converterData?.from ?: tp)
+        val typeResolver = checkSubtypes(tp, e)
+        val onArgs = e.getAnnotation(PutOnTypeArguments::class.java)?.value
         for (mod in e.modifiers) when (mod) {
             Modifier.PRIVATE -> {
                 // cannot write
@@ -172,8 +204,9 @@ class MappableVisitor(
                         false,
                         serializer,
                         default,
-                        buildGenericsInfo(converterData?.from ?: tp, false, ::serializer),
-                        converterData
+                        buildGenericsInfo(converterData?.from ?: tp, onArgs, e),
+                        converterData,
+                        typeResolver
                 ))
             }
             else -> {
@@ -185,8 +218,9 @@ class MappableVisitor(
                         false,
                         serializer,
                         default,
-                        buildGenericsInfo(converterData?.from ?: tp, true, ::parser),
-                        converterData
+                        buildGenericsInfo(converterData?.from ?: tp, onArgs, e),
+                        converterData,
+                        typeResolver
                 ))
                 builder.setters.add(Setter(
                         builder.name,
@@ -194,40 +228,43 @@ class MappableVisitor(
                         Setter.Type.DIRECT,
                         parser,
                         default,
-                        buildGenericsInfo(converterData?.from ?: tp, false, ::serializer),
-                        converterData
+                        buildGenericsInfo(converterData?.from ?: tp, onArgs, e),
+                        converterData,
+                        typeResolver
                 ))
             }
         }
         p
     } ?: defaultAction(e, p)
 
-    override fun visitType(e: TypeElement, p: HashMap<String, FieldDataBuilder>): HashMap<String, FieldDataBuilder>
-            = processor.elements.getAllMembers(e).fold(p) { acc, element -> element.accept(this, acc) }
+    override fun visitType(e: TypeElement, p: HashMap<String, FieldDataBuilder>): HashMap<String, FieldDataBuilder> =
+            processor.elements.getAllMembers(e)
+                    .filter { it.kind !in kindOfType } // filter out inner classes
+                    .fold(p) { acc, element -> element.accept(this, acc) }
 
     private fun patchGetSet(name: Name): CharSequence {
         val n = name.toString()
-        return if (n.startsWith("get") || n.startsWith("set")) (n[3].toLowerCase() + n.substring(4))
+        return if ((n.startsWith("get") || n.startsWith("set")) && (n.length > 3 && !n[3].isLowerCase())) (n[3].toLowerCase() + n.substring(4))
         else n
     }
 
-    private fun mapperFor(property: Property, tp: TypeMirror) = property.safeUsing().toString().run {
+    private fun mapperFor(specificMapper: SpecificMapper, tp: TypeMirror) = specificMapper.safeUsing().toString().run {
         if (equals(MappingAdapter::class.safeCanonicalName().toString())) {
-            val parserName = property.safeUsingPar()
+            val parserName = specificMapper.safeUsingPar()
             val parser = if (Parser::class.safeCanonicalName().toString() == parserName.toString()) {
                 parser(tp)
             } else {
-                adapterInfo(parserName, property.parseUsingNamed)
+                adapterInfo(parserName, specificMapper.parseUsingNamed)
             }
-            val serializerName = property.safeUsingSer()
+            val serializerName = specificMapper.safeUsingSer()
             val serializer = if (Serializer::class.safeCanonicalName().toString() == serializerName.toString()) {
                 serializer(tp)
             } else {
-                adapterInfo(serializerName, property.serializeUsingNamed)
+                adapterInfo(serializerName, specificMapper.serializeUsingNamed)
             }
             parser to serializer
         } else {
-            adapterInfo(this, property.usingNamed).let { it to it }
+            adapterInfo(this, specificMapper.usingNamed).let { it to it }
         }
     }
 
@@ -241,41 +278,89 @@ class MappableVisitor(
 
     private fun parser(tp: TypeMirror) = when {
         tp.kind == TypeKind.TYPEVAR && tp is TypeVariable -> AdapterInfo("var$tp")
-        tp.kind == TypeKind.ARRAY && tp is ArrayType && !tp.componentType.kind.isPrimitive -> processor.parsers[processor.objectArrayType, ::TypeNotFoundException]
-        else -> processor.parsers[tp.erase(), ::TypeNotFoundException]
+        tp.kind == TypeKind.ARRAY && tp is ArrayType && !tp.componentType.kind.isPrimitive -> processor.parsers[TypeInfo.from(processor.objectArrayType), ::TypeNotFoundException]
+        else -> processor.parsers[TypeInfo.from(tp.erase()), ::TypeNotFoundException]
     }
 
     private fun serializer(tp: TypeMirror) = when {
         tp.kind == TypeKind.TYPEVAR && tp is TypeVariable -> AdapterInfo("var$tp")
-        tp.kind == TypeKind.ARRAY && tp is ArrayType && !tp.componentType.kind.isPrimitive -> processor.serializers[processor.objectArrayType, ::TypeNotFoundException]
-        else -> processor.serializers[tp.erase(), ::TypeNotFoundException]
+        tp.kind == TypeKind.ARRAY && tp is ArrayType && !tp.componentType.kind.isPrimitive -> processor.serializers[TypeInfo.from(processor.objectArrayType), ::TypeNotFoundException]
+        else -> processor.serializers[TypeInfo.from(tp.erase()), ::TypeNotFoundException]
     }
 
     private fun buildGenericsInfo(
             tp: TypeMirror,
-            isParser: Boolean,
-            adapters: (TypeMirror) -> AdapterInfo = if (isParser) ::parser else ::serializer
-    ): List<GenericTypeInfo> {
-        return when {
+            onArgs: Array<PutOnTypeArguments.OnArg>?,
+            element: Element
+    ): List<GenericTypeInfo> = object {
+        var position: Int = 0
+
+        private fun PutOnTypeArguments.OnArg?.adapter(tp: TypeMirror) =
+                if (this != null && value) mapperFor(via, tp) else parser(tp) to serializer(tp)
+        private fun PutOnTypeArguments.OnArg?.converter(tp: TypeMirror) =
+                if (this != null && value) ConverterVisitor.buildConverterData(processor.env, tp, (tp as DeclaredType).asElement(), convert)
+                else null
+        private fun PutOnTypeArguments.OnArg?.resolver(supertype: TypeMirror, element: Element) =
+                if (this != null && value) checkSubtypes(supertype, element) else null
+
+        private fun <T> Array<T>?.at(ix: Int): T? =
+                if (this == null || size <= ix) null else get(ix)
+
+        fun walk(tp: TypeMirror): List<GenericTypeInfo> = when {
             tp.kind == TypeKind.DECLARED && tp is DeclaredType -> tp.typeArguments.map {
-                val canMap = runCatching { parser(it).className == serializer(it).className }.getOrElse { false }
-                val genericsInfo = buildGenericsInfo(it, isParser, adapters)
-                GenericTypeInfo(it, adapters(it), genericsInfo, when {
-                    canMap -> GenericTypeInfo.AdapterType.MAPPER
-                    isParser -> GenericTypeInfo.AdapterType.PARSER
-                    else -> GenericTypeInfo.AdapterType.SERIALIZER
-                })
+                val onArg = onArgs.at(position)
+                val converter = onArg.converter(it)
+                val tpToResolve = converter?.from ?: it
+                val subtypes = onArg.resolver(tpToResolve, element)
+                ++position
+                val genericsInfo = walk(it)
+                if (subtypes != null) GenericTypeInfo(
+                        it,
+                        genericsInfo,
+                        converter,
+                        subtypes
+                ) else {
+                    val (par, ser) = onArg.adapter(tpToResolve)
+                    GenericTypeInfo(
+                            it,
+                            par,
+                            ser,
+                            genericsInfo,
+                            converter
+                    )
+                }
             }
             tp.kind == TypeKind.ARRAY && tp is ArrayType && !tp.componentType.kind.isPrimitive -> {
-                listOf(GenericTypeInfo(tp.componentType, adapters(tp.componentType), emptyList(), when {
-                    runCatching { parser(tp.componentType).className == serializer(tp.componentType).className }.getOrElse { false } -> GenericTypeInfo.AdapterType.MAPPER
-                    isParser -> GenericTypeInfo.AdapterType.PARSER
-                    else -> GenericTypeInfo.AdapterType.SERIALIZER
-                }))
+                val componentType = tp.componentType
+                val onArg = onArgs.at(position)
+                val converter = onArg.converter(componentType)
+                val tpToResolve = converter?.from ?: componentType
+                val subtypes = onArg.resolver(tpToResolve, element)
+                ++position
+                listOf(
+                        if (subtypes != null) GenericTypeInfo(
+                                componentType,
+                                emptyList(),
+                                converter,
+                                subtypes
+                        ) else {
+                            val (par, ser) = onArg.adapter(tpToResolve)
+                            GenericTypeInfo(
+                                    componentType,
+                                    par,
+                                    ser,
+                                    emptyList(),
+                                    converter
+                            )
+                        }
+                )
             }
-            else -> emptyList()
+            else -> {
+                ++position
+                emptyList()
+            }
         }
-    }
+    }.walk(tp)
 
     private fun TypeMirror.erase() = processor.types.erasure(this)
 
@@ -292,4 +377,29 @@ class MappableVisitor(
     }
 
     private fun checkRequired(e: Element) = e.getAnnotation(Required::class.java)?.value ?: false
+
+    internal fun SubtypeResolver.concreteTypeResolver(supertype: TypeMirror, element: Element): ConcreteTypeResolver {
+        val getMapper: (ReferenceType, SpecificMapper) -> SpecifiedMapper = { refTp, annotation ->
+            val (par, ser) = mapperFor(annotation, refTp)
+            SpecifiedMapper(refTp, par, ser)
+        }
+        val resolver = ConcreteTypeResolver(
+                processor.env,
+                this,
+                getMapper,
+                getMapper(supertype as ReferenceType, onUnknown),
+                buildGenericsInfo(supertype, element.getAnnotation(PutOnTypeArguments::class.java)?.value, element)
+        )
+        val types = processor.types
+        resolver.subtypes.values.forEach {
+            if (!types.isSubtype(types.erasure(it.type), types.erasure(supertype))) {
+                processor.m.printMessage(Diagnostic.Kind.ERROR, "${it.type} is not subtype of $supertype", element)
+            }
+        }
+        return resolver
+    }
+
+    private fun checkSubtypes(supertype: TypeMirror, element: Element): ConcreteTypeResolver? =
+            if (supertype.kind.isPrimitive || supertype.kind == TypeKind.ARRAY) null
+            else element.getAnnotation(SubtypeResolver::class.java)?.concreteTypeResolver(supertype, element)
 }

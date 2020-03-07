@@ -17,6 +17,13 @@ package com.gitlab.faerytea.mapper.adapters;
 
 import java.io.IOException;
 
+/**
+ * Interface for transforming data from
+ * serialized form
+ *
+ * @param <T>      class for programmers
+ * @param <Input>  provider of data
+ */
 public interface Parser<T, Input> {
     T toObject(Input source) throws IOException;
 }
