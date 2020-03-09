@@ -5,15 +5,21 @@ plugins {
     id 'com.jfrog.bintray' version '1.8.4'
 }
 
-group 'com.gitlab.faerytea.mapper'
-version '0.9'
+group 'com.gitlab.faerytea.mapper.jackson'
+version '1.0'
 
-compileJava {
-    sourceCompatibility = 1.6
+sourceCompatibility = 1.6
+
+repositories {
+    jcenter()
+    maven { url "https://dl.bintray.com/faerytea/jars" }
 }
 
 dependencies {
+    api 'com.gitlab.faerytea.mapper:annotations:0.9'
+    api 'com.fasterxml.jackson.core:jackson-core:2.10.+'
 }
+
 
 task sourcesJar(type: Jar) {
     classifier = 'sources'
@@ -26,8 +32,13 @@ task javadocJar(type: Jar) {
 }
 
 bintray {
-    user = rootProject.bintrayUsername
-    key = rootProject.bintrayKey
+    def properties = new Properties() {
+        {
+            load(new File('../../core/local.properties').newInputStream())
+        }
+    }
+    user = properties.'bintray.user'
+    key = properties.'bintray.key'
     pkg {
         repo = 'jars'
         name = project.name
@@ -35,16 +46,15 @@ bintray {
         vcsUrl = 'https://gitlab.com/faerytea/mapper.git'
         version {
             name = project.version
-            desc = 'Add polymorphism & boolean adapter'
-            released = new Date(1583606708702L)
+            released = new Date(1583790000000L)
         }
     }
-    publications = ['mapperAnnotations']
+    publications = ['mapperJacksonRuntime']
 }
 
 publishing {
     publications {
-        mapperAnnotations(MavenPublication) {
+        mapperJacksonRuntime(MavenPublication) {
             from components.java
 
             artifact sourcesJar

@@ -1,0 +1,25 @@
+plugins {
+    id 'java'
+}
+
+group 'test'
+version '1.0-SNAPSHOT'
+
+sourceCompatibility = 1.8
+
+repositories {
+    mavenLocal()
+    jcenter()
+}
+
+compileJava {
+    options.compilerArgs
+}
+
+compileJava.options.compilerArgs += '-AmapperGeneratorName=com.gitlab.faerytea.mapper.jackson.JacksonProcessor'
+
+dependencies {
+    implementation 'com.gitlab.faerytea.mapper.jackson:mapper-jackson-runtime:1.0'
+    annotationProcessor 'com.gitlab.faerytea.mapper.jackson:mapper-jackson-processor:1.0'
+    annotationProcessor 'com.gitlab.faerytea.mapper:processor:0.1.18'
+}
